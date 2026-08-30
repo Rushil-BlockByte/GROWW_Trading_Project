@@ -1,4 +1,5 @@
 import { DEFAULT_UNDERLYINGS } from "@/lib/config/market";
+import { buildOptionChainContext } from "@/lib/options/chain-context";
 import { createPhase2PipelineSnapshot } from "@/lib/simulation/phase2-pipeline";
 import { createPhase4IndicatorContext } from "@/lib/simulation/phase4-context";
 import type {
@@ -111,11 +112,18 @@ export function createSimulatedMarketSnapshot(step: number): SimulatedMarketSnap
   });
 
   const phase2 = createPhase2PipelineSnapshot(step, String(niftyLast));
+  const optionChain = buildOptionChain(drift);
+  const phase5 = buildOptionChainContext({
+    underlying: "NIFTY",
+    underlyingLastPrice: String(niftyLast),
+    expiry: phase2.selectedExpiry,
+    rows: optionChain,
+  });
 
   return {
     generatedAt: new Date().toISOString(),
     underlyings,
-    optionChain: buildOptionChain(drift),
+    optionChain,
     signal: {
       id: "SIM-NO-TRADE-001",
       underlying: "NIFTY",
@@ -143,5 +151,6 @@ export function createSimulatedMarketSnapshot(step: number): SimulatedMarketSnap
     },
     phase2,
     phase4,
+    phase5,
   };
 }

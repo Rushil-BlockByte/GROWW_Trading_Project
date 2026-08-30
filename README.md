@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 4 Status
+## Phase 5 Status
 
-Implemented through Phase 4:
+Implemented through Phase 5:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -37,6 +37,13 @@ Implemented through Phase 4:
 - Phase 4 simulation context attached to the dashboard snapshot
 - Simulation API endpoint at `/api/simulation/phase4`
 - Dashboard indicator context panel
+- Deterministic option-chain context engine
+- CE/PE total OI, OI change, volume, and explicit PE/CE OI ratios
+- Max OI and max OI-change strike detection
+- OI support and resistance levels from nearby put/call walls
+- Contract-level liquidity gating using volume, OI, spread, premium, and volume/OI ratio
+- Simulation API endpoint at `/api/simulation/phase5`
+- Dashboard option-chain context panel and CE/PE tradable status labels
 - Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, and Kite provider behavior
 
 Not implemented yet:
@@ -61,7 +68,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-4 create the shell, provider contracts, live read-only stream, candle pipeline, and indicator context. Strategy scoring and paper-trade persistence come later.
+Phases 1-5 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, and option-chain liquidity context. Strategy scoring and paper-trade persistence come later.
 
 ## Technology
 
@@ -168,6 +175,29 @@ curl http://localhost:3000/api/simulation/phase4
 
 These values are displayed as context only. They do not create trade signals or live orders.
 
+## Option-Chain Context
+
+Phase 5 adds the deterministic option-chain layer used by future strategy rules:
+
+- Total CE and PE open interest
+- Total CE and PE OI change
+- Total CE and PE traded volume
+- Explicit PE/CE open-interest ratio
+- Explicit PE/CE OI-change ratio
+- Max CE/PE OI strikes
+- Max CE/PE OI-change strikes
+- Put-side OI support levels below spot
+- Call-side OI resistance levels above spot
+- Contract liquidity status based on volume, OI, bid/ask spread, premium range, and volume/OI ratio
+
+The Phase 5 endpoint is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase5
+```
+
+Liquidity status does not mean take a trade. It only says whether a contract passes basic market-quality checks.
+
 ## Database
 
 The Prisma schema includes:
@@ -230,6 +260,7 @@ Tests cover:
 - Candle building and market-state freshness checks
 - Kite tick normalization and read-only provider behavior
 - Phase 4 indicator calculations and simulation context
+- Phase 5 option-chain context and liquidity gating
 
 ## Market Hours
 

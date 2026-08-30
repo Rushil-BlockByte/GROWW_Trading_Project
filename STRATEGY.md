@@ -24,7 +24,7 @@ If the setup is incomplete, the result is `NO TRADE`.
 
 ## Technical Inputs
 
-Phase 4 implements the price/volume context inputs only. They are displayed for inspection and are not yet converted into entry or exit signals.
+Phase 4 implements the price/volume context inputs. Phase 5 implements option-chain and liquidity context. They are displayed for inspection and are not yet converted into entry or exit signals.
 
 - Current price
 - Session VWAP
@@ -122,6 +122,8 @@ Metrics:
 
 Do not call the ratio `PCR` unless its definition is explicit.
 
+Phase 5 calls the headline ratio `PE/CE OI ratio`, calculated as total put open interest divided by total call open interest across the selected option universe.
+
 ## Liquidity
 
 Before suggesting an option, the engine checks:
@@ -138,6 +140,8 @@ Failure result:
 NO TRADE
 Reason: Poor option liquidity.
 ```
+
+Phase 5 applies liquidity checks at the contract level. The status is either `TRADABLE` or `NOT_TRADABLE`, but this is only a market-quality gate. It is not a strategy signal.
 
 ## Scoring
 

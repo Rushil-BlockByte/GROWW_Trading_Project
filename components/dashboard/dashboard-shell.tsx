@@ -12,6 +12,7 @@ import {
   CandlestickChart,
   CircleDollarSign,
   Database,
+  Filter,
   Gauge,
   Layers,
   PauseCircle,
@@ -32,6 +33,11 @@ import { DEFAULT_RISK_CONFIGURATION } from "@/lib/risk/defaults";
 import { calculateDailyLossLimit, calculatePositionSize } from "@/lib/risk/position-sizing";
 import { createSimulatedMarketSnapshot } from "@/lib/simulation/market-snapshot";
 import type { PriceLevel } from "@/types/indicators";
+import type {
+  OptionChainContext,
+  OptionLiquidityStatus,
+  OptionOpenInterestLevel,
+} from "@/types/options";
 import type { LiveKiteStreamSnapshot } from "@/lib/zerodha/live-stream-service";
 import type { SimulatedMarketSnapshot, SimulatedUnderlying } from "@/types/simulation";
 
@@ -91,6 +97,14 @@ function emaTrendVariant(trend: SimulatedMarketSnapshot["phase4"]["emaTrend"]) {
   if (trend === "Bearish") return "destructive" as const;
   if (trend === "Mixed") return "warning" as const;
   return "muted" as const;
+}
+
+function liquidityVariant(status: OptionLiquidityStatus) {
+  return status === "TRADABLE" ? "success" as const : "destructive" as const;
+}
+
+function formatLiquidityStatus(status: OptionLiquidityStatus) {
+  return status === "TRADABLE" ? "Tradable" : "Not tradable";
 }
 
 export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
@@ -167,7 +181,8 @@ export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
           <OpportunityScanner snapshot={snapshot} />
         </section>
 
-        <section>
+        <section className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
+          <OptionChainContextPanel context={snapshot.phase5} />
           <OptionChain
             snapshot={snapshot}
             selectedUnderlying={selectedUnderlying}
@@ -315,6 +330,113 @@ function LevelList({ title, levels }: { title: string; levels: PriceLevel[] }) {
             >
               <span className="min-w-0 truncate text-muted-foreground">{level.label}</span>
               <span className="font-semibold tabular-nums">{formatIndicator(level.value)}</span>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-md border bg-muted/35 px-3 py-2 text-sm text-muted-foreground">
+            Pending
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function OptionChainContextPanel({ context }: { context: OptionChainContext }) {
+  const totalContracts = context.rowCount * 2;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Filter className="h-5 w-5 text-primary" />
+              Option Context
+            </CardTitle>
+            <CardDescription>
+              {context.underlying} {context.expiry}
+            </CardDescription>
+          </div>
+          <Badge variant={context.tradableContracts > 0 ? "success" : "warning"}>
+            {context.tradableContracts}/{totalContracts} liquid
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Metric label="CE OI" value={formatNumber(context.totalCallOpenInterest)} />
+          <Metric label="PE OI" value={formatNumber(context.totalPutOpenInterest)} />
+          <Metric label="OI ratio" value={formatIndicator(context.putCallOpenInterestRatio)} />
+          <Metric label="OI chg ratio" value={formatIndicator(context.putCallOiChangeRatio)} />
+          <Metric label="CE volume" value={formatNumber(context.totalCallVolume)} />
+          <Metric label="PE volume" value={formatNumber(context.totalPutVolume)} />
+        </div>
+
+        <div className="grid gap-2">
+          <OptionLeaderRow leader={context.maxCallOpenInterest} />
+          <OptionLeaderRow leader={context.maxPutOpenInterest} />
+          <OptionLeaderRow leader={context.maxCallOiChange} />
+          <OptionLeaderRow leader={context.maxPutOiChange} />
+        </div>
+
+        <div className="grid gap-3">
+          <OiLevelList title="OI Support" levels={context.oiSupportLevels} />
+          <OiLevelList title="OI Resistance" levels={context.oiResistanceLevels} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OptionLeaderRow({
+  leader,
+}: {
+  leader: OptionChainContext["maxCallOpenInterest"];
+}) {
+  if (!leader) {
+    return (
+      <div className="rounded-md border bg-muted/35 px-3 py-2 text-sm text-muted-foreground">
+        Pending
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border bg-muted/35 px-3 py-2 text-sm">
+      <div className="min-w-0">
+        <p className="truncate font-medium">{leader.label}</p>
+        <p className="text-xs text-muted-foreground">
+          {leader.side} {formatNumber(leader.strike)}
+        </p>
+      </div>
+      <div className="text-right tabular-nums">
+        <p className="font-semibold">{formatNumber(leader.openInterest)}</p>
+        <p className="text-xs text-emerald-700">{formatSigned(leader.oiChange)}</p>
+      </div>
+    </div>
+  );
+}
+
+function OiLevelList({ title, levels }: { title: string; levels: OptionOpenInterestLevel[] }) {
+  return (
+    <div className="rounded-md border p-3">
+      <p className="mb-2 text-sm font-semibold">{title}</p>
+      <div className="grid gap-2">
+        {levels.length ? (
+          levels.map((level) => (
+            <div
+              key={`${level.role}-${level.side}-${level.strike}`}
+              className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border bg-muted/35 px-3 py-2 text-sm"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-medium">{formatNumber(level.strike)}</p>
+                <p className="text-xs text-muted-foreground">{level.label}</p>
+              </div>
+              <div className="text-right tabular-nums">
+                <p className="font-semibold">{formatNumber(level.openInterest)}</p>
+                <p className="text-xs text-emerald-700">{formatSigned(level.oiChange)}</p>
+              </div>
             </div>
           ))
         ) : (
@@ -651,6 +773,11 @@ function OptionChain({
   selectedUnderlying: SimulatedUnderlying["symbol"];
   onSelectUnderlying: (symbol: SimulatedUnderlying["symbol"]) => void;
 }) {
+  const liquidityByStrike = useMemo(
+    () => new Map(snapshot.phase5.rows.map((row) => [row.strike, row])),
+    [snapshot.phase5.rows],
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -686,35 +813,51 @@ function OptionChain({
               <TableHead>Strike</TableHead>
               <TableHead>PE OI</TableHead>
               <TableHead>PE LTP</TableHead>
-              <TableHead>Spread</TableHead>
+              <TableHead>Liquidity</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {snapshot.optionChain.map((row) => (
-              <TableRow key={row.strike} className={row.isAtm ? "bg-secondary/20" : undefined}>
-                <TableCell className="font-semibold tabular-nums">{formatInr(row.call.ltp)}</TableCell>
-                <TableCell className="tabular-nums">
-                  {formatNumber(row.call.openInterest)}
-                  <span className="ml-1 text-xs text-emerald-700">
-                    {formatSigned(row.call.oiChange)}
-                  </span>
-                </TableCell>
-                <TableCell className="font-semibold tabular-nums">
-                  {formatNumber(row.strike)}
-                  {row.isAtm ? <Badge className="ml-2" variant="secondary">ATM</Badge> : null}
-                </TableCell>
-                <TableCell className="tabular-nums">
-                  {formatNumber(row.put.openInterest)}
-                  <span className="ml-1 text-xs text-emerald-700">
-                    {formatSigned(row.put.oiChange)}
-                  </span>
-                </TableCell>
-                <TableCell className="font-semibold tabular-nums">{formatInr(row.put.ltp)}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">
-                  CE {row.call.spreadPercent}% / PE {row.put.spreadPercent}%
-                </TableCell>
-              </TableRow>
-            ))}
+            {snapshot.optionChain.map((row) => {
+              const contextRow = liquidityByStrike.get(row.strike);
+              const callStatus = contextRow?.call.status ?? "NOT_TRADABLE";
+              const putStatus = contextRow?.put.status ?? "NOT_TRADABLE";
+
+              return (
+                <TableRow key={row.strike} className={row.isAtm ? "bg-secondary/20" : undefined}>
+                  <TableCell className="font-semibold tabular-nums">{formatInr(row.call.ltp)}</TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatNumber(row.call.openInterest)}
+                    <span className="ml-1 text-xs text-emerald-700">
+                      {formatSigned(row.call.oiChange)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-semibold tabular-nums">
+                    {formatNumber(row.strike)}
+                    {row.isAtm ? <Badge className="ml-2" variant="secondary">ATM</Badge> : null}
+                  </TableCell>
+                  <TableCell className="tabular-nums">
+                    {formatNumber(row.put.openInterest)}
+                    <span className="ml-1 text-xs text-emerald-700">
+                      {formatSigned(row.put.oiChange)}
+                    </span>
+                  </TableCell>
+                  <TableCell className="font-semibold tabular-nums">{formatInr(row.put.ltp)}</TableCell>
+                  <TableCell>
+                    <div className="flex min-w-[9rem] flex-col gap-1">
+                      <Badge variant={liquidityVariant(callStatus)}>
+                        CE {formatLiquidityStatus(callStatus)}
+                      </Badge>
+                      <Badge variant={liquidityVariant(putStatus)}>
+                        PE {formatLiquidityStatus(putStatus)}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        CE {row.call.spreadPercent}% / PE {row.put.spreadPercent}%
+                      </span>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </CardContent>

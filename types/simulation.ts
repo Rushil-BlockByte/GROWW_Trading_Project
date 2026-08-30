@@ -6,6 +6,7 @@ import type {
 } from "@/types/market";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorContext } from "@/types/indicators";
+import type { OptionChainContext } from "@/types/options";
 
 export type SimulatedUnderlying = {
   symbol: UnderlyingSymbol;
@@ -80,6 +81,7 @@ export type SimulatedMarketSnapshot = {
   health: SimulatedSystemHealth;
   phase2: SimulatedPhase2Pipeline;
   phase4: IndicatorContext;
+  phase5: OptionChainContext;
 };
 
 export type SimulatedPhase2Pipeline = {
