@@ -1,0 +1,485 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MarketDataMode {
+  SIMULATION
+  LIVE
+}
+
+enum InstrumentKind {
+  INDEX
+  FUTURE
+  OPTION_CE
+  OPTION_PE
+  EQUITY
+  VOLATILITY_INDEX
+}
+
+enum SignalDirection {
+  BULLISH
+  BEARISH
+  NO_TRADE
+}
+
+enum SignalQuality {
+  NO_SETUP
+  WEAK
+  WATCH
+  STRONG
+  HIGH_QUALITY
+}
+
+enum SignalState {
+  FORMING
+  CONFIRMED
+  ACTIVE
+  INVALIDATED
+  TARGET_1
+  TARGET_2
+  STOPPED
+  EXPIRED
+}
+
+enum TradeSide {
+  LONG_CALL
+  LONG_PUT
+}
+
+enum PaperTradeStatus {
+  OPEN
+  CLOSED
+  STOPPED
+  TARGET_1
+  TARGET_2
+  EXPIRED
+  CANCELLED
+}
+
+enum BacktestStatus {
+  DRAFT
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model User {
+  id                 String                @id @default(cuid())
+  email              String                @unique
+  name               String?
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+  kiteSessions       KiteSession[]
+  riskConfigurations RiskConfiguration[]
+  dailyPlans         DailyMarketPlan[]
+  signals            MarketSignal[]
+  paperTrades        PaperTrade[]
+  dailyPerformance   DailyPerformance[]
+  backtests          Backtest[]
+
+  @@index([email])
+}
+
+model KiteSession {
+  id                  String         @id @default(cuid())
+  userId              String
+  mode                MarketDataMode @default(SIMULATION)
+  apiKeyHash          String?
+  accessTokenHash     String?
+  lastAuthenticatedAt DateTime?
+  expiresAt           DateTime?
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  user                User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([mode])
+  @@index([expiresAt])
+}
+
+model Instrument {
+  id              String           @id @default(cuid())
+  exchange        String
+  tradingsymbol   String
+  instrumentToken Int              @unique
+  name            String?
+  expiry          DateTime?
+  strike          Decimal?         @db.Decimal(18, 4)
+  instrumentType  String
+  kind            InstrumentKind
+  segment         String
+  lotSize         Int
+  tickSize        Decimal          @db.Decimal(18, 6)
+  metadata        Json?
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  candles         MarketCandle[]
+  optionSnapshots OptionSnapshot[]
+  underlyingSignals MarketSignal[] @relation("UnderlyingInstrument")
+  optionSignals      MarketSignal[] @relation("OptionInstrument")
+
+  @@unique([exchange, tradingsymbol])
+  @@index([exchange])
+  @@index([tradingsymbol])
+  @@index([expiry])
+  @@index([strike])
+  @@index([instrumentType])
+  @@index([instrumentToken])
+  @@index([exchange, expiry, strike, instrumentType])
+}
+
+model TradingSession {
+  id               String             @id @default(cuid())
+  tradeDate        DateTime           @unique
+  marketOpenAt     DateTime
+  marketCloseAt    DateTime
+  status           String
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  candles          MarketCandle[]
+  signals          MarketSignal[]
+  paperTrades      PaperTrade[]
+  dailyPerformance DailyPerformance[]
+
+  @@index([tradeDate])
+  @@index([status])
+}
+
+model MarketCandle {
+  id               String         @id @default(cuid())
+  tradingSessionId String
+  instrumentId     String
+  interval         String
+  timestamp        DateTime
+  open             Decimal        @db.Decimal(18, 6)
+  high             Decimal        @db.Decimal(18, 6)
+  low              Decimal        @db.Decimal(18, 6)
+  close            Decimal        @db.Decimal(18, 6)
+  volume           BigInt?
+  openInterest     BigInt?
+  source           MarketDataMode @default(SIMULATION)
+  createdAt        DateTime       @default(now())
+  tradingSession   TradingSession @relation(fields: [tradingSessionId], references: [id], onDelete: Cascade)
+  instrument       Instrument     @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@unique([instrumentId, interval, timestamp])
+  @@index([tradingSessionId])
+  @@index([instrumentId])
+  @@index([interval])
+  @@index([timestamp])
+}
+
+model OptionSnapshot {
+  id                   String     @id @default(cuid())
+  instrumentId         String
+  timestamp            DateTime
+  ltp                  Decimal    @db.Decimal(18, 6)
+  volume               BigInt?
+  openInterest         BigInt?
+  changeInOpenInterest BigInt?
+  bid                  Decimal?   @db.Decimal(18, 6)
+  ask                  Decimal?   @db.Decimal(18, 6)
+  spreadPercent        Decimal?   @db.Decimal(10, 4)
+  baselineType         String?
+  baselineTimestamp    DateTime?
+  raw                  Json?
+  createdAt            DateTime   @default(now())
+  instrument           Instrument @relation(fields: [instrumentId], references: [id], onDelete: Cascade)
+
+  @@index([instrumentId])
+  @@index([timestamp])
+  @@index([instrumentId, timestamp])
+}
+
+model Strategy {
+  id             String                  @id @default(cuid())
+  name           String
+  version        String
+  description    String?
+  active         Boolean                 @default(true)
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @updatedAt
+  configurations StrategyConfiguration[]
+  signals        MarketSignal[]
+  backtests      Backtest[]
+
+  @@unique([name, version])
+  @@index([active])
+}
+
+model StrategyConfiguration {
+  id          String         @id @default(cuid())
+  strategyId  String
+  version     String
+  config      Json
+  createdAt   DateTime       @default(now())
+  strategy    Strategy       @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  signals     MarketSignal[]
+  backtests   Backtest[]
+
+  @@unique([strategyId, version])
+  @@index([strategyId])
+}
+
+model MarketSignal {
+  id                      String                 @id @default(cuid())
+  userId                  String?
+  strategyId              String
+  strategyConfigurationId String
+  tradingSessionId        String
+  underlyingInstrumentId  String?
+  optionInstrumentId      String?
+  strategyName            String
+  strategyVersion         String
+  configurationVersion    String
+  direction               SignalDirection
+  quality                 SignalQuality
+  state                   SignalState            @default(FORMING)
+  score                   Int
+  underlyingEntry         Decimal?               @db.Decimal(18, 6)
+  underlyingInvalidation  Decimal?               @db.Decimal(18, 6)
+  optionEntryLow          Decimal?               @db.Decimal(18, 6)
+  optionEntryHigh         Decimal?               @db.Decimal(18, 6)
+  optionStopEstimate      Decimal?               @db.Decimal(18, 6)
+  targetOne               Decimal?               @db.Decimal(18, 6)
+  targetTwo               Decimal?               @db.Decimal(18, 6)
+  riskReward              Decimal?               @db.Decimal(10, 4)
+  reasons                 Json
+  risks                   Json?
+  immutableSnapshot       Json
+  generatedAt             DateTime
+  invalidatedAt           DateTime?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  user                    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  strategy                Strategy               @relation(fields: [strategyId], references: [id])
+  strategyConfiguration   StrategyConfiguration  @relation(fields: [strategyConfigurationId], references: [id])
+  tradingSession          TradingSession         @relation(fields: [tradingSessionId], references: [id])
+  underlyingInstrument    Instrument?            @relation("UnderlyingInstrument", fields: [underlyingInstrumentId], references: [id])
+  optionInstrument        Instrument?            @relation("OptionInstrument", fields: [optionInstrumentId], references: [id])
+  events                  SignalEvent[]
+  paperTrades             PaperTrade[]
+
+  @@index([userId])
+  @@index([strategyId])
+  @@index([strategyConfigurationId])
+  @@index([tradingSessionId])
+  @@index([direction])
+  @@index([quality])
+  @@index([state])
+  @@index([generatedAt])
+}
+
+model SignalEvent {
+  id        String       @id @default(cuid())
+  signalId  String
+  eventType String
+  message   String
+  payload   Json?
+  createdAt DateTime     @default(now())
+  signal    MarketSignal @relation(fields: [signalId], references: [id], onDelete: Cascade)
+
+  @@index([signalId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+model PaperTrade {
+  id               String           @id @default(cuid())
+  userId           String
+  signalId         String?
+  tradingSessionId String?
+  underlying       String
+  optionSymbol     String
+  strike           Decimal          @db.Decimal(18, 4)
+  expiry           DateTime
+  side             TradeSide
+  entryPrice       Decimal          @db.Decimal(18, 6)
+  stopPrice        Decimal          @db.Decimal(18, 6)
+  targetOne        Decimal?         @db.Decimal(18, 6)
+  targetTwo        Decimal?         @db.Decimal(18, 6)
+  quantity         Int
+  lots             Int
+  status           PaperTradeStatus @default(OPEN)
+  score            Int
+  marketRegime     String
+  reasons          Json
+  notes            Json?
+  realizedPnl      Decimal          @default(0) @db.Decimal(18, 6)
+  unrealizedPnl    Decimal          @default(0) @db.Decimal(18, 6)
+  mae              Decimal?         @db.Decimal(18, 6)
+  mfe              Decimal?         @db.Decimal(18, 6)
+  rMultiple        Decimal?         @db.Decimal(10, 4)
+  openedAt         DateTime
+  closedAt         DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signal           MarketSignal?    @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  tradingSession   TradingSession?  @relation(fields: [tradingSessionId], references: [id], onDelete: SetNull)
+  events           TradeEvent[]
+
+  @@index([userId])
+  @@index([signalId])
+  @@index([tradingSessionId])
+  @@index([underlying])
+  @@index([expiry])
+  @@index([status])
+  @@index([openedAt])
+}
+
+model TradeEvent {
+  id           String     @id @default(cuid())
+  paperTradeId String
+  eventType    String
+  price        Decimal?   @db.Decimal(18, 6)
+  payload      Json?
+  createdAt    DateTime   @default(now())
+  paperTrade   PaperTrade @relation(fields: [paperTradeId], references: [id], onDelete: Cascade)
+
+  @@index([paperTradeId])
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+model RiskConfiguration {
+  id                              String   @id @default(cuid())
+  userId                          String
+  totalCapital                    Decimal? @db.Decimal(18, 2)
+  tradingCapital                  Decimal  @db.Decimal(18, 2)
+  maximumDeployableCapitalPercent Decimal  @db.Decimal(10, 4)
+  riskPerTradePercent             Decimal  @db.Decimal(10, 4)
+  maximumDailyLossPercent         Decimal  @db.Decimal(10, 4)
+  maximumNumberOfTrades           Int
+  maximumOpenPositions            Int
+  minimumRiskReward               Decimal  @db.Decimal(10, 4)
+  active                          Boolean  @default(true)
+  createdAt                       DateTime @default(now())
+  updatedAt                       DateTime @updatedAt
+  user                            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([active])
+}
+
+model DailyMarketPlan {
+  id              String   @id @default(cuid())
+  userId          String
+  tradeDate       DateTime
+  underlying      String
+  bias            String?
+  support         Json?
+  resistance      Json?
+  bullishScenario String?
+  bearishScenario String?
+  invalidation    String?
+  importantEvents String?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, tradeDate, underlying])
+  @@index([userId])
+  @@index([tradeDate])
+  @@index([underlying])
+}
+
+model DailyPerformance {
+  id                  String          @id @default(cuid())
+  userId              String
+  tradingSessionId    String?
+  tradeDate           DateTime
+  totalTrades         Int             @default(0)
+  wins                Int             @default(0)
+  losses              Int             @default(0)
+  winRate             Decimal?        @db.Decimal(10, 4)
+  averageWin          Decimal?        @db.Decimal(18, 6)
+  averageLoss         Decimal?        @db.Decimal(18, 6)
+  profitFactor        Decimal?        @db.Decimal(10, 4)
+  expectancy          Decimal?        @db.Decimal(18, 6)
+  averageR            Decimal?        @db.Decimal(10, 4)
+  maximumDrawdown     Decimal?        @db.Decimal(18, 6)
+  largestWin          Decimal?        @db.Decimal(18, 6)
+  largestLoss         Decimal?        @db.Decimal(18, 6)
+  consecutiveWins     Int             @default(0)
+  consecutiveLosses   Int             @default(0)
+  breakdown           Json?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradingSession      TradingSession? @relation(fields: [tradingSessionId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, tradeDate])
+  @@index([userId])
+  @@index([tradingSessionId])
+  @@index([tradeDate])
+}
+
+model Backtest {
+  id                      String                 @id @default(cuid())
+  userId                  String?
+  strategyId              String
+  strategyConfigurationId String
+  name                    String
+  status                  BacktestStatus         @default(DRAFT)
+  trainingStart           DateTime?
+  trainingEnd             DateTime?
+  validationStart         DateTime?
+  validationEnd           DateTime?
+  outOfSampleStart        DateTime?
+  outOfSampleEnd          DateTime?
+  assumptions             Json
+  metrics                 Json?
+  createdAt               DateTime               @default(now())
+  updatedAt               DateTime               @updatedAt
+  user                    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
+  strategy                Strategy               @relation(fields: [strategyId], references: [id])
+  strategyConfiguration   StrategyConfiguration  @relation(fields: [strategyConfigurationId], references: [id])
+  trades                  BacktestTrade[]
+
+  @@index([userId])
+  @@index([strategyId])
+  @@index([strategyConfigurationId])
+  @@index([status])
+}
+
+model BacktestTrade {
+  id              String    @id @default(cuid())
+  backtestId      String
+  signalTimestamp DateTime
+  entryTimestamp  DateTime
+  exitTimestamp   DateTime?
+  underlying      String
+  optionSymbol    String
+  strike          Decimal   @db.Decimal(18, 4)
+  expiry          DateTime
+  side            TradeSide
+  entryPrice      Decimal   @db.Decimal(18, 6)
+  exitPrice       Decimal?  @db.Decimal(18, 6)
+  stopPrice       Decimal   @db.Decimal(18, 6)
+  targetOne       Decimal?  @db.Decimal(18, 6)
+  targetTwo       Decimal?  @db.Decimal(18, 6)
+  quantity        Int
+  slippage        Decimal?  @db.Decimal(18, 6)
+  transactionCost Decimal?  @db.Decimal(18, 6)
+  realizedPnl     Decimal?  @db.Decimal(18, 6)
+  rMultiple       Decimal?  @db.Decimal(10, 4)
+  marketRegime    String
+  score           Int
+  outcome         String?
+  snapshot        Json
+  createdAt       DateTime  @default(now())
+  backtest        Backtest  @relation(fields: [backtestId], references: [id], onDelete: Cascade)
+
+  @@index([backtestId])
+  @@index([signalTimestamp])
+  @@index([underlying])
+  @@index([expiry])
+  @@index([outcome])
+}

@@ -1,0 +1,99 @@
+import type {
+  DataQualityStatus,
+  MarketRegime,
+  SignalQuality,
+  UnderlyingSymbol,
+} from "@/types/market";
+import type { MarketCandleData } from "@/types/candles";
+import type { IndicatorContext } from "@/types/indicators";
+
+export type SimulatedUnderlying = {
+  symbol: UnderlyingSymbol;
+  label: string;
+  lastPrice: number;
+  change: number;
+  changePercent: number;
+  vwap: number;
+  vwapDistance: number;
+  trend: "Bullish" | "Bearish" | "Flat";
+  volumeRelative: number;
+  openInterest: number;
+  oiChange: number;
+  regime: MarketRegime;
+  dataQuality: DataQualityStatus;
+  support: number;
+  resistance: number;
+};
+
+export type SimulatedOptionLeg = {
+  ltp: number;
+  volume: number;
+  openInterest: number;
+  oiChange: number;
+  bid: number;
+  ask: number;
+  spreadPercent: number;
+};
+
+export type SimulatedOptionRow = {
+  strike: number;
+  isAtm: boolean;
+  call: SimulatedOptionLeg;
+  put: SimulatedOptionLeg;
+};
+
+export type SimulatedSignal = {
+  id: string;
+  underlying: UnderlyingSymbol;
+  direction: "BULLISH" | "BEARISH" | "NO TRADE";
+  setupName: string;
+  score: number;
+  quality: SignalQuality;
+  suggestedOption?: string;
+  entryRange?: string;
+  underlyingInvalidation?: number;
+  optionStopEstimate?: number;
+  targetOne?: number;
+  targetTwo?: number;
+  riskReward?: string;
+  reasons: string[];
+  risks: string[];
+  state: "FORMING" | "CONFIRMED" | "ACTIVE" | "INVALIDATED";
+};
+
+export type SimulatedSystemHealth = {
+  websocket: "NOT_CONNECTED" | "CONNECTED" | "RECONNECTING" | "DISCONNECTED";
+  lastTickSecondsAgo: number;
+  subscriptions: number;
+  rejectedSubscriptions: number;
+  dataQuality: DataQualityStatus;
+  signalEngine: "PARKED" | "RUNNING" | "STOPPED";
+  database: "CONFIGURED" | "NOT_CONFIGURED";
+  mode: "simulation" | "live";
+};
+
+export type SimulatedMarketSnapshot = {
+  generatedAt: string;
+  underlyings: SimulatedUnderlying[];
+  optionChain: SimulatedOptionRow[];
+  signal: SimulatedSignal;
+  health: SimulatedSystemHealth;
+  phase2: SimulatedPhase2Pipeline;
+  phase4: IndicatorContext;
+};
+
+export type SimulatedPhase2Pipeline = {
+  instrumentMasterCount: number;
+  selectedUnderlying: UnderlyingSymbol;
+  selectedExpiry: string;
+  atmStrike: string;
+  optionUniverseCount: number;
+  missingContracts: number;
+  subscriptionCount: number;
+  rejectedSubscriptions: number;
+  trackedInstruments: number;
+  dataQuality: DataQualityStatus;
+  latestTickToken?: number;
+  activeCandles: MarketCandleData[];
+  completedCandleCount: number;
+};

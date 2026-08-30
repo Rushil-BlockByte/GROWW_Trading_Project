@@ -1,0 +1,50 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: 210 25% 98%;
+  --foreground: 214 26% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 214 26% 11%;
+  --primary: 164 72% 24%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 42 84% 55%;
+  --secondary-foreground: 30 20% 10%;
+  --muted: 210 18% 93%;
+  --muted-foreground: 215 13% 38%;
+  --accent: 207 76% 44%;
+  --accent-foreground: 0 0% 100%;
+  --destructive: 2 73% 47%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 214 22% 86%;
+  --input: 214 22% 86%;
+  --ring: 164 72% 24%;
+  --radius: 0.5rem;
+}
+
+* {
+  border-color: hsl(var(--border));
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  background: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-family: Inter, system-ui, "Segoe UI", sans-serif;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
