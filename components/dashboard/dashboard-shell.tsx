@@ -14,6 +14,7 @@ import {
   Database,
   Filter,
   Gauge,
+  History,
   Layers,
   PauseCircle,
   Power,
@@ -43,6 +44,7 @@ import {
 import { DEFAULT_RISK_CONFIGURATION } from "@/lib/risk/defaults";
 import { calculateDailyLossLimit, calculatePositionSize } from "@/lib/risk/position-sizing";
 import { createSimulatedMarketSnapshot } from "@/lib/simulation/market-snapshot";
+import type { BacktestResult, BacktestTrade, BacktestTradeOutcome } from "@/types/backtest";
 import type { PriceLevel } from "@/types/indicators";
 import type {
   OptionChainContext,
@@ -55,6 +57,7 @@ import type { SimulatedMarketSnapshot, SimulatedUnderlying } from "@/types/simul
 import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/strategy";
 
 type DashboardShellProps = {
+  initialBacktestResult: BacktestResult;
   initialSnapshot: SimulatedMarketSnapshot;
 };
 
@@ -146,6 +149,13 @@ function paperStatusVariant(status: PaperTradeJournalStatus) {
   return "destructive" as const;
 }
 
+function tradeOutcomeVariant(outcome: BacktestTradeOutcome) {
+  if (outcome === "WIN") return "success" as const;
+  if (outcome === "LOSS") return "destructive" as const;
+
+  return "muted" as const;
+}
+
 function createJournalId() {
   if (typeof window !== "undefined" && window.crypto?.randomUUID) {
     return window.crypto.randomUUID();
@@ -162,7 +172,25 @@ function formatJournalTime(value: string) {
   });
 }
 
-export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
+function formatBacktestWindow(startedAt: string, endedAt: string) {
+  const start = new Date(startedAt).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+  const end = new Date(endedAt).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+
+  return `${start} - ${end}`;
+}
+
+export function DashboardShell({
+  initialBacktestResult,
+  initialSnapshot,
+}: DashboardShellProps) {
   const [step, setStep] = useState(0);
   const [selectedUnderlying, setSelectedUnderlying] = useState<SimulatedUnderlying["symbol"]>("NIFTY");
 
@@ -245,6 +273,8 @@ export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
           />
         </section>
 
+        <BacktestSummaryPanel result={initialBacktestResult} />
+
         <section className="grid gap-4 xl:grid-cols-4">
           <RiskDashboard
             dailyLossLimit={dailyLossLimit}
@@ -286,6 +316,80 @@ export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
         </section>
       </div>
     </main>
+  );
+}
+
+function BacktestSummaryPanel({ result }: { result: BacktestResult }) {
+  const { metadata, summary } = result;
+  const latestTrades = result.trades.slice(0, 3);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <History className="h-5 w-5 text-primary" />
+              Backtest Replay
+            </CardTitle>
+            <CardDescription>
+              {metadata.underlying} {formatBacktestWindow(metadata.startedAt, metadata.endedAt)}
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant="outline">{metadata.dataSource.replaceAll("_", " ")}</Badge>
+            <Badge variant="success">Paper only</Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-6">
+          <Metric label="Net P&L" value={formatInr(summary.netPnl)} />
+          <Metric label="Win rate" value={`${summary.winRate}%`} />
+          <Metric label="Trades" value={String(summary.trades)} />
+          <Metric label="Profit factor" value={summary.profitFactor ?? "Open"} />
+          <Metric label="Max drawdown" value={formatInr(summary.maxDrawdown)} />
+          <Metric label="Costs" value={formatInr(summary.costs)} />
+        </div>
+
+        <div className="grid gap-2 lg:grid-cols-3">
+          {latestTrades.length ? (
+            latestTrades.map((trade) => <BacktestTradeRow key={trade.id} trade={trade} />)
+          ) : (
+            <div className="rounded-md border bg-muted/35 px-3 py-3 text-sm text-muted-foreground lg:col-span-3">
+              No historical trades fired in this replay.
+            </div>
+          )}
+        </div>
+
+        {result.warnings.length ? (
+          <div className="rounded-md border bg-yellow-50 p-3 text-sm font-medium text-yellow-950">
+            {result.warnings[0]}
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BacktestTradeRow({ trade }: { trade: BacktestTrade }) {
+  return (
+    <div className="grid gap-2 rounded-md border bg-muted/35 px-3 py-2 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{trade.optionSymbol}</p>
+          <p className="text-xs text-muted-foreground">
+            {trade.exitReason.replace("_", " ")} at {formatJournalTime(trade.exitTime)}
+          </p>
+        </div>
+        <Badge variant={tradeOutcomeVariant(trade.outcome)}>{trade.outcome}</Badge>
+      </div>
+      <div className="grid grid-cols-3 gap-2 text-xs">
+        <Metric label="Entry" value={formatInr(trade.entryPrice)} />
+        <Metric label="Exit" value={formatInr(trade.exitPrice)} />
+        <Metric label="Net" value={formatInr(trade.netPnl)} />
+      </div>
+    </div>
   );
 }
 

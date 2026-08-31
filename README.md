@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 7 Status
+## Phase 8 Status
 
-Implemented through Phase 7:
+Implemented through Phase 8:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -54,12 +54,18 @@ Implemented through Phase 7:
 - Save-anytime observation notes tied to the current scanner snapshot
 - Guarded paper-trade capture from confirmed strategy setups only
 - Paper-trade summary metrics for open trades, notes, rule violations, and P&L
-- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, and paper-journal behavior
+- Deterministic VWAP breakout backtest replay engine
+- Next-candle entry simulation with stop/target/session-close exits
+- Slippage, brokerage, lot-size, and position-sizing assumptions in replay results
+- Simulation API endpoint at `/api/simulation/phase8`
+- Dashboard backtest replay summary with net P&L, win rate, costs, and drawdown
+- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, and backtest replay behavior
 
 Not implemented yet:
 
 - Database-backed paper-trade persistence
-- Historical backtesting
+- Kite historical candle ingestion
+- Multi-day backtesting
 - AI explanation layer
 - Live order placement
 
@@ -77,7 +83,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-7 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, and a local paper-trade journal. Database-backed paper-trade persistence comes later.
+Phases 1-8 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, and a simulated historical backtest replay. Database-backed paper-trade persistence and Kite historical ingestion come later.
 
 ## Technology
 
@@ -237,6 +243,25 @@ Phase 7 adds a local browser journal on the dashboard:
 
 This is intentionally paper-only. It does not place broker orders and it does not bypass the strategy gates.
 
+## Backtest Replay
+
+Phase 8 adds a deterministic replay engine for the same VWAP breakout strategy:
+
+- Historical candles are evaluated one at a time.
+- Signals use only candles available at that point in the replay.
+- Entry happens on the next candle after confirmation.
+- Exits use stop, target one, or session close.
+- Slippage, brokerage, lot size, and position sizing are included.
+- Results are read-only and never connected to broker order placement.
+
+The Phase 8 endpoint is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase8
+```
+
+The current replay uses deterministic sample data. It is a framework for validating strategy mechanics, not evidence of real market profitability.
+
 ## Database
 
 The Prisma schema includes:
@@ -302,6 +327,7 @@ Tests cover:
 - Phase 5 option-chain context and liquidity gating
 - Phase 6 deterministic strategy scoring and no-trade gates
 - Phase 7 paper-journal notes, guarded paper-trade capture, and P&L summaries
+- Phase 8 simulated backtest replay, next-candle entry, gated skips, and P&L summaries
 
 ## Market Hours
 

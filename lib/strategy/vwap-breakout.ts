@@ -648,7 +648,7 @@ function buildRisks({
   marketRegime: MarketRegime;
   confirmed: boolean;
 }) {
-  const risks = ["Live orders disabled.", "Paper trade capture is not implemented yet."];
+  const risks = ["Live orders disabled.", "Paper-only workflow."];
 
   if (dataQuality !== "GOOD") {
     risks.push(`Data quality is ${dataQuality.replace("_", " ")}.`);

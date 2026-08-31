@@ -234,3 +234,5 @@ Rules:
 - Slippage and transaction costs included
 - Lot sizes respected
 - Expiry availability respected
+
+Phase 8 implements the first deterministic replay for the VWAP breakout strategy. It evaluates candles sequentially, enters only on the next candle after confirmation, and records skipped signals when risk or liquidity prevents a valid paper-sized trade.

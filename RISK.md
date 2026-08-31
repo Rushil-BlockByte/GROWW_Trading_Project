@@ -154,3 +154,15 @@ Every paper trade should track:
 - Was the trade taken during an avoid period?
 
 The journal exists to make repeat mistakes visible.
+
+## Backtest Risk Assumptions
+
+Phase 8 replay results include:
+
+- Position sizing from the configured trading capital and risk percent
+- Lot-size rounding
+- Slippage on entry and exit
+- Brokerage on both sides
+- Skipped trades when one valid lot cannot be sized
+
+Backtest P&L is a simulation result only. It must not be treated as live execution quality or a profit guarantee.
