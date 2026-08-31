@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { InstrumentRepository } from "@/lib/instruments/instrument-repository";
 import { runVwapBreakoutBacktest } from "@/lib/backtesting/vwap-breakout-backtest";
 import { getServerConfig } from "@/lib/config/env";
+import { persistBacktestResult } from "@/lib/persistence/backtest-store";
 import { downloadKiteInstruments } from "@/lib/zerodha/instruments-client";
 import { fetchKiteHistoricalCandles, isKiteHistoricalInterval } from "@/lib/zerodha/historical-data-client";
 import {
@@ -223,6 +224,18 @@ export async function GET(request: NextRequest) {
               : undefined,
           })
         : null;
+    let persistedBacktest = null;
+    let persistenceWarning: string | null = null;
+
+    if (backtest && boolParam(searchParams.get("persist"))) {
+      try {
+        persistedBacktest = await persistBacktestResult({
+          result: backtest,
+        });
+      } catch (error) {
+        persistenceWarning = error instanceof Error ? error.message : "Backtest persistence failed.";
+      }
+    }
 
     return NextResponse.json({
       ok: true,
@@ -237,6 +250,8 @@ export async function GET(request: NextRequest) {
       historical,
       optionHistorical,
       backtest,
+      persistedBacktest,
+      persistenceWarning,
       backtestAssumption: backtest
         ? optionHistorical
           ? "Underlying and option candles came from Kite; option bid/ask spread is estimated from the configured spread assumption."

@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 10 Status
+## Phase 11 Status
 
-Implemented through Phase 10:
+Implemented through Phase 11:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -68,12 +68,18 @@ Implemented through Phase 10:
 - Real option-history replay rows with explicit bid/ask spread assumptions
 - Simulation API endpoint at `/api/simulation/phase10`
 - Dashboard option-history readiness card
-- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, backtest replay behavior, Kite historical normalization, and Kite option-history replay rows
+- Optional PostgreSQL-backed paper journal persistence
+- Optional PostgreSQL-backed backtest run and trade persistence
+- Journal sync API endpoint at `/api/paper-journal`
+- Backtest save/list API endpoint at `/api/backtests`
+- Dashboard journal sync status and replay save controls
+- Simulation API endpoint at `/api/simulation/phase11`
+- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, persistence mapping, backtest replay behavior, Kite historical normalization, and Kite option-history replay rows
 
 Not implemented yet:
 
-- Database-backed paper-trade persistence
 - Production-scale backtest storage and reporting
+- Authentication and real multi-user account boundaries
 - AI explanation layer
 - Live order placement
 
@@ -91,7 +97,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-10 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, and real option historical candle ingestion for backtests. Database-backed paper-trade persistence and production-scale backtest storage come later.
+Phases 1-11 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, real option historical candle ingestion for backtests, and optional PostgreSQL persistence for journal entries and replay runs. Production reporting and authentication come later.
 
 ## Technology
 
@@ -136,6 +142,7 @@ KITE_API_KEY=
 KITE_API_SECRET=
 KITE_ACCESS_TOKEN=
 DATABASE_URL=
+DATABASE_PERSISTENCE_USER_EMAIL=
 REDIS_URL=
 NEXT_PUBLIC_APP_URL=
 NEXT_PUBLIC_MARKET_DATA_MODE=
@@ -194,6 +201,12 @@ curl "http://localhost:3000/api/kite/historical?underlying=NIFTY&date=2026-08-31
 ```
 
 `includeOptions=true` downloads the Kite NFO instrument master, resolves the nearest or requested expiry, fetches the ATM CE/PE band, and builds replay-ready option rows. Historical bid/ask depth is not available from Kite candles, so replay liquidity checks use the configured spread assumption, defaulting to `1.00%`.
+
+Add `persist=true` when a historical request also runs a backtest and should save the replay result:
+
+```bash
+curl "http://localhost:3000/api/kite/historical?underlying=NIFTY&date=2026-08-31&interval=minute&includeOptions=true&backtest=true&persist=true&previousHigh=25210&previousLow=24980&previousClose=25060"
+```
 
 ## Indicator Context
 
@@ -267,6 +280,14 @@ Phase 7 adds a local browser journal on the dashboard:
 
 This is intentionally paper-only. It does not place broker orders and it does not bypass the strategy gates.
 
+Phase 11 adds optional database-backed journal sync:
+
+- The browser still saves entries immediately.
+- `/api/paper-journal` lists and saves journal entries when `DATABASE_URL` is configured.
+- Standalone notes and guarded paper trades both persist.
+- Structured paper trades are also linked to the `PaperTrade` table when the entry has trade fields.
+- If the database is not reachable, the dashboard keeps working in local-only mode.
+
 ## Backtest Replay
 
 Phase 8 adds a deterministic replay engine for the same VWAP breakout strategy:
@@ -316,6 +337,20 @@ The Phase 10 endpoint marker is read-only:
 curl http://localhost:3000/api/simulation/phase10
 ```
 
+Phase 11 adds replay persistence:
+
+- `/api/backtests` lists saved replay runs.
+- `POST /api/backtests` saves a single-day or multi-day replay result.
+- Backtest trades are saved under the run and refreshed idempotently on repeated saves.
+- The dashboard includes save buttons on the replay cards.
+- Live orders remain disabled.
+
+The Phase 11 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase11
+```
+
 ## Database
 
 The Prisma schema includes:
@@ -331,6 +366,7 @@ The Prisma schema includes:
 - `MarketSignal`
 - `SignalEvent`
 - `PaperTrade`
+- `PaperJournalEntry`
 - `TradeEvent`
 - `RiskConfiguration`
 - `DailyMarketPlan`
@@ -384,6 +420,7 @@ Tests cover:
 - Phase 8 simulated backtest replay, next-candle entry, gated skips, and P&L summaries
 - Phase 9 Kite historical candle normalization and multi-day replay aggregation
 - Phase 10 Kite option historical ingestion, row alignment, spread assumptions, and strike-window caps
+- Phase 11 persistence mapping for paper journal entries and backtest records
 
 ## Market Hours
 

@@ -265,7 +265,7 @@ export function calculatePaperJournalSummary(entries: PaperJournalEntry[]): Pape
   };
 }
 
-function isPaperJournalEntry(value: unknown): value is PaperJournalEntry {
+export function isPaperJournalEntry(value: unknown): value is PaperJournalEntry {
   if (!value || typeof value !== "object") return false;
 
   const entry = value as Partial<PaperJournalEntry>;

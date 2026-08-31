@@ -69,18 +69,19 @@ enum BacktestStatus {
 }
 
 model User {
-  id                 String                @id @default(cuid())
-  email              String                @unique
-  name               String?
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
-  kiteSessions       KiteSession[]
-  riskConfigurations RiskConfiguration[]
-  dailyPlans         DailyMarketPlan[]
-  signals            MarketSignal[]
-  paperTrades        PaperTrade[]
-  dailyPerformance   DailyPerformance[]
-  backtests          Backtest[]
+  id                  String              @id @default(cuid())
+  email               String              @unique
+  name                String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  kiteSessions        KiteSession[]
+  riskConfigurations  RiskConfiguration[]
+  dailyPlans          DailyMarketPlan[]
+  signals             MarketSignal[]
+  paperTrades         PaperTrade[]
+  paperJournalEntries PaperJournalEntry[]
+  dailyPerformance    DailyPerformance[]
+  backtests           Backtest[]
 
   @@index([email])
 }
@@ -103,25 +104,25 @@ model KiteSession {
 }
 
 model Instrument {
-  id              String           @id @default(cuid())
-  exchange        String
-  tradingsymbol   String
-  instrumentToken Int              @unique
-  name            String?
-  expiry          DateTime?
-  strike          Decimal?         @db.Decimal(18, 4)
-  instrumentType  String
-  kind            InstrumentKind
-  segment         String
-  lotSize         Int
-  tickSize        Decimal          @db.Decimal(18, 6)
-  metadata        Json?
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  candles         MarketCandle[]
-  optionSnapshots OptionSnapshot[]
-  underlyingSignals MarketSignal[] @relation("UnderlyingInstrument")
-  optionSignals      MarketSignal[] @relation("OptionInstrument")
+  id                String           @id @default(cuid())
+  exchange          String
+  tradingsymbol     String
+  instrumentToken   Int              @unique
+  name              String?
+  expiry            DateTime?
+  strike            Decimal?         @db.Decimal(18, 4)
+  instrumentType    String
+  kind              InstrumentKind
+  segment           String
+  lotSize           Int
+  tickSize          Decimal          @db.Decimal(18, 6)
+  metadata          Json?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  candles           MarketCandle[]
+  optionSnapshots   OptionSnapshot[]
+  underlyingSignals MarketSignal[]   @relation("UnderlyingInstrument")
+  optionSignals     MarketSignal[]   @relation("OptionInstrument")
 
   @@unique([exchange, tradingsymbol])
   @@index([exchange])
@@ -213,21 +214,21 @@ model Strategy {
 }
 
 model StrategyConfiguration {
-  id          String         @id @default(cuid())
-  strategyId  String
-  version     String
-  config      Json
-  createdAt   DateTime       @default(now())
-  strategy    Strategy       @relation(fields: [strategyId], references: [id], onDelete: Cascade)
-  signals     MarketSignal[]
-  backtests   Backtest[]
+  id         String         @id @default(cuid())
+  strategyId String
+  version    String
+  config     Json
+  createdAt  DateTime       @default(now())
+  strategy   Strategy       @relation(fields: [strategyId], references: [id], onDelete: Cascade)
+  signals    MarketSignal[]
+  backtests  Backtest[]
 
   @@unique([strategyId, version])
   @@index([strategyId])
 }
 
 model MarketSignal {
-  id                      String                 @id @default(cuid())
+  id                      String                @id @default(cuid())
   userId                  String?
   strategyId              String
   strategyConfigurationId String
@@ -239,29 +240,29 @@ model MarketSignal {
   configurationVersion    String
   direction               SignalDirection
   quality                 SignalQuality
-  state                   SignalState            @default(FORMING)
+  state                   SignalState           @default(FORMING)
   score                   Int
-  underlyingEntry         Decimal?               @db.Decimal(18, 6)
-  underlyingInvalidation  Decimal?               @db.Decimal(18, 6)
-  optionEntryLow          Decimal?               @db.Decimal(18, 6)
-  optionEntryHigh         Decimal?               @db.Decimal(18, 6)
-  optionStopEstimate      Decimal?               @db.Decimal(18, 6)
-  targetOne               Decimal?               @db.Decimal(18, 6)
-  targetTwo               Decimal?               @db.Decimal(18, 6)
-  riskReward              Decimal?               @db.Decimal(10, 4)
+  underlyingEntry         Decimal?              @db.Decimal(18, 6)
+  underlyingInvalidation  Decimal?              @db.Decimal(18, 6)
+  optionEntryLow          Decimal?              @db.Decimal(18, 6)
+  optionEntryHigh         Decimal?              @db.Decimal(18, 6)
+  optionStopEstimate      Decimal?              @db.Decimal(18, 6)
+  targetOne               Decimal?              @db.Decimal(18, 6)
+  targetTwo               Decimal?              @db.Decimal(18, 6)
+  riskReward              Decimal?              @db.Decimal(10, 4)
   reasons                 Json
   risks                   Json?
   immutableSnapshot       Json
   generatedAt             DateTime
   invalidatedAt           DateTime?
-  createdAt               DateTime               @default(now())
-  updatedAt               DateTime               @updatedAt
-  user                    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
-  strategy                Strategy               @relation(fields: [strategyId], references: [id])
-  strategyConfiguration   StrategyConfiguration  @relation(fields: [strategyConfigurationId], references: [id])
-  tradingSession          TradingSession         @relation(fields: [tradingSessionId], references: [id])
-  underlyingInstrument    Instrument?            @relation("UnderlyingInstrument", fields: [underlyingInstrumentId], references: [id])
-  optionInstrument        Instrument?            @relation("OptionInstrument", fields: [optionInstrumentId], references: [id])
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  user                    User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  strategy                Strategy              @relation(fields: [strategyId], references: [id])
+  strategyConfiguration   StrategyConfiguration @relation(fields: [strategyConfigurationId], references: [id])
+  tradingSession          TradingSession        @relation(fields: [tradingSessionId], references: [id])
+  underlyingInstrument    Instrument?           @relation("UnderlyingInstrument", fields: [underlyingInstrumentId], references: [id])
+  optionInstrument        Instrument?           @relation("OptionInstrument", fields: [optionInstrumentId], references: [id])
   events                  SignalEvent[]
   paperTrades             PaperTrade[]
 
@@ -290,39 +291,40 @@ model SignalEvent {
 }
 
 model PaperTrade {
-  id               String           @id @default(cuid())
+  id               String              @id @default(cuid())
   userId           String
   signalId         String?
   tradingSessionId String?
   underlying       String
   optionSymbol     String
-  strike           Decimal          @db.Decimal(18, 4)
+  strike           Decimal             @db.Decimal(18, 4)
   expiry           DateTime
   side             TradeSide
-  entryPrice       Decimal          @db.Decimal(18, 6)
-  stopPrice        Decimal          @db.Decimal(18, 6)
-  targetOne        Decimal?         @db.Decimal(18, 6)
-  targetTwo        Decimal?         @db.Decimal(18, 6)
+  entryPrice       Decimal             @db.Decimal(18, 6)
+  stopPrice        Decimal             @db.Decimal(18, 6)
+  targetOne        Decimal?            @db.Decimal(18, 6)
+  targetTwo        Decimal?            @db.Decimal(18, 6)
   quantity         Int
   lots             Int
-  status           PaperTradeStatus @default(OPEN)
+  status           PaperTradeStatus    @default(OPEN)
   score            Int
   marketRegime     String
   reasons          Json
   notes            Json?
-  realizedPnl      Decimal          @default(0) @db.Decimal(18, 6)
-  unrealizedPnl    Decimal          @default(0) @db.Decimal(18, 6)
-  mae              Decimal?         @db.Decimal(18, 6)
-  mfe              Decimal?         @db.Decimal(18, 6)
-  rMultiple        Decimal?         @db.Decimal(10, 4)
+  realizedPnl      Decimal             @default(0) @db.Decimal(18, 6)
+  unrealizedPnl    Decimal             @default(0) @db.Decimal(18, 6)
+  mae              Decimal?            @db.Decimal(18, 6)
+  mfe              Decimal?            @db.Decimal(18, 6)
+  rMultiple        Decimal?            @db.Decimal(10, 4)
   openedAt         DateTime
   closedAt         DateTime?
-  createdAt        DateTime         @default(now())
-  updatedAt        DateTime         @updatedAt
-  user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  signal           MarketSignal?    @relation(fields: [signalId], references: [id], onDelete: SetNull)
-  tradingSession   TradingSession?  @relation(fields: [tradingSessionId], references: [id], onDelete: SetNull)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  signal           MarketSignal?       @relation(fields: [signalId], references: [id], onDelete: SetNull)
+  tradingSession   TradingSession?     @relation(fields: [tradingSessionId], references: [id], onDelete: SetNull)
   events           TradeEvent[]
+  journalEntries   PaperJournalEntry[]
 
   @@index([userId])
   @@index([signalId])
@@ -331,6 +333,53 @@ model PaperTrade {
   @@index([expiry])
   @@index([status])
   @@index([openedAt])
+}
+
+model PaperJournalEntry {
+  id              String      @id
+  userId          String
+  paperTradeId    String?
+  type            String
+  status          String
+  signalId        String
+  strategyName    String
+  strategyVersion String
+  underlying      String
+  signalState     String
+  bias            String
+  quality         String
+  score           Int
+  marketRegime    String
+  optionSymbol    String?
+  optionSide      String?
+  tradeSide       String?
+  strike          Decimal?    @db.Decimal(18, 4)
+  expiry          DateTime?
+  entryPrice      Decimal?    @db.Decimal(18, 6)
+  stopPrice       Decimal?    @db.Decimal(18, 6)
+  targetOne       Decimal?    @db.Decimal(18, 6)
+  targetTwo       Decimal?    @db.Decimal(18, 6)
+  quantity        Int         @default(0)
+  lots            Int         @default(0)
+  notes           String
+  reasons         Json
+  risks           Json
+  ruleViolations  Json
+  realizedPnl     Decimal     @default(0) @db.Decimal(18, 6)
+  unrealizedPnl   Decimal     @default(0) @db.Decimal(18, 6)
+  snapshot        Json?
+  createdAt       DateTime
+  updatedAt       DateTime
+  syncedAt        DateTime    @default(now())
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paperTrade      PaperTrade? @relation(fields: [paperTradeId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([paperTradeId])
+  @@index([type])
+  @@index([status])
+  @@index([underlying])
+  @@index([createdAt])
 }
 
 model TradeEvent {
@@ -391,29 +440,29 @@ model DailyMarketPlan {
 }
 
 model DailyPerformance {
-  id                  String          @id @default(cuid())
-  userId              String
-  tradingSessionId    String?
-  tradeDate           DateTime
-  totalTrades         Int             @default(0)
-  wins                Int             @default(0)
-  losses              Int             @default(0)
-  winRate             Decimal?        @db.Decimal(10, 4)
-  averageWin          Decimal?        @db.Decimal(18, 6)
-  averageLoss         Decimal?        @db.Decimal(18, 6)
-  profitFactor        Decimal?        @db.Decimal(10, 4)
-  expectancy          Decimal?        @db.Decimal(18, 6)
-  averageR            Decimal?        @db.Decimal(10, 4)
-  maximumDrawdown     Decimal?        @db.Decimal(18, 6)
-  largestWin          Decimal?        @db.Decimal(18, 6)
-  largestLoss         Decimal?        @db.Decimal(18, 6)
-  consecutiveWins     Int             @default(0)
-  consecutiveLosses   Int             @default(0)
-  breakdown           Json?
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
-  user                User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  tradingSession      TradingSession? @relation(fields: [tradingSessionId], references: [id], onDelete: SetNull)
+  id                String          @id @default(cuid())
+  userId            String
+  tradingSessionId  String?
+  tradeDate         DateTime
+  totalTrades       Int             @default(0)
+  wins              Int             @default(0)
+  losses            Int             @default(0)
+  winRate           Decimal?        @db.Decimal(10, 4)
+  averageWin        Decimal?        @db.Decimal(18, 6)
+  averageLoss       Decimal?        @db.Decimal(18, 6)
+  profitFactor      Decimal?        @db.Decimal(10, 4)
+  expectancy        Decimal?        @db.Decimal(18, 6)
+  averageR          Decimal?        @db.Decimal(10, 4)
+  maximumDrawdown   Decimal?        @db.Decimal(18, 6)
+  largestWin        Decimal?        @db.Decimal(18, 6)
+  largestLoss       Decimal?        @db.Decimal(18, 6)
+  consecutiveWins   Int             @default(0)
+  consecutiveLosses Int             @default(0)
+  breakdown         Json?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tradingSession    TradingSession? @relation(fields: [tradingSessionId], references: [id], onDelete: SetNull)
 
   @@unique([userId, tradeDate])
   @@index([userId])
@@ -422,12 +471,12 @@ model DailyPerformance {
 }
 
 model Backtest {
-  id                      String                 @id @default(cuid())
+  id                      String                @id @default(cuid())
   userId                  String?
   strategyId              String
   strategyConfigurationId String
   name                    String
-  status                  BacktestStatus         @default(DRAFT)
+  status                  BacktestStatus        @default(DRAFT)
   trainingStart           DateTime?
   trainingEnd             DateTime?
   validationStart         DateTime?
@@ -436,11 +485,11 @@ model Backtest {
   outOfSampleEnd          DateTime?
   assumptions             Json
   metrics                 Json?
-  createdAt               DateTime               @default(now())
-  updatedAt               DateTime               @updatedAt
-  user                    User?                  @relation(fields: [userId], references: [id], onDelete: SetNull)
-  strategy                Strategy               @relation(fields: [strategyId], references: [id])
-  strategyConfiguration   StrategyConfiguration  @relation(fields: [strategyConfigurationId], references: [id])
+  createdAt               DateTime              @default(now())
+  updatedAt               DateTime              @updatedAt
+  user                    User?                 @relation(fields: [userId], references: [id], onDelete: SetNull)
+  strategy                Strategy              @relation(fields: [strategyId], references: [id])
+  strategyConfiguration   StrategyConfiguration @relation(fields: [strategyConfigurationId], references: [id])
   trades                  BacktestTrade[]
 
   @@index([userId])

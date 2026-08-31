@@ -240,3 +240,5 @@ Phase 8 implements the first deterministic replay for the VWAP breakout strategy
 Phase 9 aggregates independent replay sessions into a multi-day result. Each session starts with its own historical context so one day cannot leak candles into another day.
 
 Phase 10 connects real Kite option historical candles to replay. The strategy can now evaluate historical option OHLC, volume, and OI for the selected ATM CE/PE band. Bid/ask spread remains an explicit replay assumption because Kite historical candles do not include depth snapshots.
+
+Phase 11 saves replay outputs to the database when configured. Stored runs preserve the strategy version, assumptions, summary metrics, equity curve, warnings, and trade snapshots so future review can compare like with like.

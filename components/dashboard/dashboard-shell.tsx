@@ -38,6 +38,8 @@ import {
   canCreatePaperTrade,
   createJournalNoteFromSnapshot,
   createPaperTradeFromSnapshot,
+  isPaperJournalEntry,
+  MAX_PAPER_JOURNAL_ENTRIES,
   PAPER_JOURNAL_STORAGE_KEY,
   parsePaperJournalEntries,
   serializePaperJournalEntries,
@@ -62,7 +64,11 @@ import type {
   OptionLiquidityStatus,
   OptionOpenInterestLevel,
 } from "@/types/options";
-import type { PaperJournalEntry, PaperTradeJournalStatus } from "@/types/paper-trading";
+import type {
+  PaperJournalEntry,
+  PaperJournalSummary,
+  PaperTradeJournalStatus,
+} from "@/types/paper-trading";
 import type { LiveKiteStreamSnapshot } from "@/lib/zerodha/live-stream-service";
 import type { SimulatedMarketSnapshot, SimulatedUnderlying } from "@/types/simulation";
 import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/strategy";
@@ -71,6 +77,44 @@ type DashboardShellProps = {
   initialBacktestResult: BacktestResult;
   initialMultiDayBacktestResult: MultiDayBacktestResult;
   initialSnapshot: SimulatedMarketSnapshot;
+};
+
+type PersistenceBadgeVariant = "success" | "warning" | "destructive" | "muted";
+
+type PersistenceUiState = {
+  label: string;
+  message: string;
+  variant: PersistenceBadgeVariant;
+};
+
+type JournalApiResponse = {
+  ok?: boolean;
+  persistence?: {
+    configured: boolean;
+    status: "database" | "local_only" | "error";
+    message: string;
+  };
+  entries?: unknown[];
+  summary?: PaperJournalSummary;
+  savedCount?: number;
+  liveOrdersEnabled?: false;
+  message?: string;
+};
+
+type BacktestApiResponse = {
+  ok?: boolean;
+  persistence?: {
+    configured: boolean;
+    status: "database" | "local_only" | "error";
+    message: string;
+  };
+  savedCount?: number;
+  liveOrdersEnabled?: false;
+  message?: string;
+};
+
+type BacktestSaveState = PersistenceUiState & {
+  busy: boolean;
 };
 
 const numberFormat = new Intl.NumberFormat("en-IN", {
@@ -197,6 +241,60 @@ function formatBacktestWindow(startedAt: string, endedAt: string) {
   });
 
   return `${start} - ${end}`;
+}
+
+function persistenceUiState(
+  persistence: JournalApiResponse["persistence"] | BacktestApiResponse["persistence"] | undefined,
+): PersistenceUiState {
+  if (!persistence) {
+    return {
+      label: "Local only",
+      message: "Saved in this browser.",
+      variant: "muted",
+    };
+  }
+
+  if (persistence.status === "database") {
+    return {
+      label: "Database synced",
+      message: persistence.message,
+      variant: "success",
+    };
+  }
+
+  if (persistence.status === "error") {
+    return {
+      label: "Sync issue",
+      message: persistence.message,
+      variant: "destructive",
+    };
+  }
+
+  return {
+    label: "Local only",
+    message: persistence.message,
+    variant: "warning",
+  };
+}
+
+function mergeJournalEntries(...groups: PaperJournalEntry[][]) {
+  const byId = new Map<string, PaperJournalEntry>();
+
+  for (const entry of groups.flat()) {
+    const current = byId.get(entry.id);
+
+    if (!current || new Date(entry.updatedAt).getTime() >= new Date(current.updatedAt).getTime()) {
+      byId.set(entry.id, entry);
+    }
+  }
+
+  return Array.from(byId.values())
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .slice(0, MAX_PAPER_JOURNAL_ENTRIES);
+}
+
+function parseJournalResponseEntries(data: JournalApiResponse) {
+  return Array.isArray(data.entries) ? data.entries.filter(isPaperJournalEntry) : [];
 }
 
 export function DashboardShell({
@@ -336,8 +434,55 @@ export function DashboardShell({
   );
 }
 
+function useBacktestPersistence(result: BacktestResult | MultiDayBacktestResult) {
+  const [state, setState] = useState<BacktestSaveState>({
+    busy: false,
+    label: "Not saved",
+    message: "This replay can be saved when the database is ready.",
+    variant: "muted",
+  });
+
+  const save = useCallback(async () => {
+    setState((current) => ({
+      ...current,
+      busy: true,
+      label: "Saving",
+      message: "Saving replay.",
+      variant: "warning",
+    }));
+
+    try {
+      const response = await fetch("/api/backtests", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ result }),
+      });
+      const data = (await response.json()) as BacktestApiResponse;
+
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.message ?? data.persistence?.message ?? "Backtest save failed.");
+      }
+
+      setState({
+        ...persistenceUiState(data.persistence),
+        busy: false,
+      });
+    } catch (error) {
+      setState({
+        busy: false,
+        label: "Sync issue",
+        message: error instanceof Error ? error.message : "Backtest save failed.",
+        variant: "destructive",
+      });
+    }
+  }, [result]);
+
+  return { save, state };
+}
+
 function MultiDayBacktestPanel({ result }: { result: MultiDayBacktestResult }) {
   const { metadata, summary } = result;
+  const persistence = useBacktestPersistence(result);
 
   return (
     <Card>
@@ -352,7 +497,20 @@ function MultiDayBacktestPanel({ result }: { result: MultiDayBacktestResult }) {
               {metadata.sessionCount} sessions, {summary.evaluatedSignals} candles evaluated
             </CardDescription>
           </div>
-          <Badge variant="success">Read-only</Badge>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={persistence.state.variant}>{persistence.state.label}</Badge>
+            <Badge variant="success">Read-only</Badge>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={persistence.state.busy}
+              onClick={() => void persistence.save()}
+            >
+              <Save className="h-4 w-4" />
+              Save Replay
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -386,6 +544,7 @@ function MultiDayBacktestPanel({ result }: { result: MultiDayBacktestResult }) {
             </div>
           ))}
         </div>
+        <p className="text-xs text-muted-foreground">{persistence.state.message}</p>
       </CardContent>
     </Card>
   );
@@ -394,6 +553,7 @@ function MultiDayBacktestPanel({ result }: { result: MultiDayBacktestResult }) {
 function BacktestSummaryPanel({ result }: { result: BacktestResult }) {
   const { metadata, summary } = result;
   const latestTrades = result.trades.slice(0, 3);
+  const persistence = useBacktestPersistence(result);
 
   return (
     <Card>
@@ -409,8 +569,19 @@ function BacktestSummaryPanel({ result }: { result: BacktestResult }) {
             </CardDescription>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={persistence.state.variant}>{persistence.state.label}</Badge>
             <Badge variant="outline">{metadata.dataSource.replaceAll("_", " ")}</Badge>
             <Badge variant="success">Paper only</Badge>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={persistence.state.busy}
+              onClick={() => void persistence.save()}
+            >
+              <Save className="h-4 w-4" />
+              Save Replay
+            </Button>
           </div>
         </div>
       </CardHeader>
@@ -439,6 +610,8 @@ function BacktestSummaryPanel({ result }: { result: BacktestResult }) {
             {result.warnings[0]}
           </div>
         ) : null}
+
+        <p className="text-xs text-muted-foreground">{persistence.state.message}</p>
       </CardContent>
     </Card>
   );
@@ -469,15 +642,79 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
   const [entries, setEntries] = useState<PaperJournalEntry[]>([]);
   const [notes, setNotes] = useState("");
   const [journalReady, setJournalReady] = useState(false);
+  const [syncingJournal, setSyncingJournal] = useState(false);
+  const [persistence, setPersistence] = useState<PersistenceUiState>({
+    label: "Checking",
+    message: "Checking database storage.",
+    variant: "muted",
+  });
   const paperTradeGuard = useMemo(() => canCreatePaperTrade(snapshot), [snapshot]);
   const summary = useMemo(() => calculatePaperJournalSummary(entries), [entries]);
   const latestEntries = entries.slice(0, 5);
 
+  const persistJournalEntries = useCallback(
+    async (entriesToSave: PaperJournalEntry[], localEntries: PaperJournalEntry[]) => {
+      setSyncingJournal(true);
+
+      try {
+        const response = await fetch("/api/paper-journal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries: entriesToSave }),
+        });
+        const data = (await response.json()) as JournalApiResponse;
+
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.message ?? data.persistence?.message ?? "Journal sync failed.");
+        }
+
+        setPersistence(persistenceUiState(data.persistence));
+
+        if (data.persistence?.status === "database") {
+          setEntries(mergeJournalEntries(localEntries, parseJournalResponseEntries(data)));
+        }
+      } catch (error) {
+        setPersistence({
+          label: "Sync issue",
+          message: error instanceof Error ? error.message : "Journal sync failed.",
+          variant: "destructive",
+        });
+      } finally {
+        setSyncingJournal(false);
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     const loadJournal = window.setTimeout(() => {
       const stored = window.localStorage.getItem(PAPER_JOURNAL_STORAGE_KEY);
-      setEntries(parsePaperJournalEntries(stored));
+      const localEntries = parsePaperJournalEntries(stored);
+      setEntries(localEntries);
       setJournalReady(true);
+
+      void (async () => {
+        try {
+          const response = await fetch("/api/paper-journal", { cache: "no-store" });
+          const data = (await response.json()) as JournalApiResponse;
+
+          if (!response.ok || data.ok === false) {
+            throw new Error(data.message ?? data.persistence?.message ?? "Journal load failed.");
+          }
+
+          setPersistence(persistenceUiState(data.persistence));
+
+          if (data.persistence?.status === "database") {
+            setEntries(mergeJournalEntries(localEntries, parseJournalResponseEntries(data)));
+          }
+        } catch (error) {
+          setPersistence({
+            label: "Local only",
+            message: error instanceof Error ? error.message : "Saved in this browser.",
+            variant: "warning",
+          });
+        }
+      })();
     }, 0);
 
     return () => window.clearTimeout(loadJournal);
@@ -498,9 +735,11 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
       notes,
       snapshot,
     });
+    const nextEntries = mergeJournalEntries([entry], entries);
 
-    setEntries((currentEntries) => [entry, ...currentEntries]);
+    setEntries(nextEntries);
     setNotes("");
+    void persistJournalEntries([entry], nextEntries);
   }
 
   function capturePaperTrade() {
@@ -513,9 +752,11 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
       snapshot,
       risk: DEFAULT_RISK_CONFIGURATION,
     });
+    const nextEntries = mergeJournalEntries([entry], entries);
 
-    setEntries((currentEntries) => [entry, ...currentEntries]);
+    setEntries(nextEntries);
     setNotes("");
+    void persistJournalEntries([entry], nextEntries);
   }
 
   return (
@@ -531,9 +772,12 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
               {summary.openTrades} open, {summary.totalEntries} saved
             </CardDescription>
           </div>
-          <Badge variant={paperTradeGuard.allowed ? "success" : "warning"}>
-            {paperTradeGuard.allowed ? "Paper ready" : "Paper gated"}
-          </Badge>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={persistence.variant}>{persistence.label}</Badge>
+            <Badge variant={paperTradeGuard.allowed ? "success" : "warning"}>
+              {paperTradeGuard.allowed ? "Paper ready" : "Paper gated"}
+            </Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -543,6 +787,7 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
           <Metric label="Notes" value={String(summary.notes)} />
           <Metric label="Rule violations" value={String(summary.ruleViolations)} />
         </div>
+        <p className="text-xs text-muted-foreground">{persistence.message}</p>
 
         <Textarea
           className="min-h-28"
@@ -551,7 +796,7 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
           placeholder="What did I see? Did I follow the plan? Emotional state. Lesson."
         />
 
-        <div className="grid gap-2 sm:grid-cols-2">
+        <div className="grid gap-2 sm:grid-cols-3">
           <Button type="button" variant="outline" disabled={!notes.trim()} onClick={saveNote}>
             <Save className="h-4 w-4" />
             Save Note
@@ -563,6 +808,15 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
           >
             <CircleDollarSign className="h-4 w-4" />
             Capture Paper Trade
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            disabled={!entries.length || syncingJournal}
+            onClick={() => void persistJournalEntries(entries, entries)}
+          >
+            <Database className="h-4 w-4" />
+            Sync Journal
           </Button>
         </div>
 
