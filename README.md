@@ -126,13 +126,33 @@ Phases 1-12 create the shell, provider contracts, live read-only stream, candle 
 
 3. Set `DATABASE_URL` for PostgreSQL.
 
-4. Generate Prisma client:
+   For a local Windows app talking to PostgreSQL in Ubuntu WSL, keep the host as
+   `127.0.0.1`, use a generated password, and disable SSL for the local bridge:
+
+   ```env
+   DATABASE_URL="postgresql://postgres:CHANGE_ME@127.0.0.1:5432/groww_options_scanner?schema=public&sslmode=disable"
+   ```
+
+4. If PostgreSQL is running inside Ubuntu WSL and Windows cannot reach it directly,
+   start the local proxy in a separate terminal:
+
+   ```bash
+   npm run db:proxy
+   ```
+
+5. Apply database migrations:
+
+   ```bash
+   npm run db:migrate
+   ```
+
+6. Generate Prisma client:
 
    ```bash
    npm run db:generate
    ```
 
-5. Run the app:
+7. Run the app:
 
    ```bash
    npm run dev
@@ -471,3 +491,4 @@ See [RISK.md](./RISK.md).
 - If option spread is too wide, the expected result is `NO TRADE`.
 - If daily loss limit is reached, the expected result is no new trade suggestions.
 - If `KITE_API_SECRET` appears in browser code, treat it as a security bug.
+- If Prisma says it cannot reach `127.0.0.1:5432`, confirm PostgreSQL is running and start `npm run db:proxy` when the database is inside Ubuntu WSL.
