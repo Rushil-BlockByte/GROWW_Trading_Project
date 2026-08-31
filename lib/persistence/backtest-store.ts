@@ -1,30 +1,23 @@
 import Decimal from "decimal.js";
 import { BacktestStatus, Prisma, TradeSide, type PrismaClient } from "@prisma/client";
+import {
+  backtestReportRecordFromResult,
+  filterBacktestReportRecords,
+  type PersistableBacktestResult,
+} from "@/lib/backtesting/backtest-reporting";
 import { prisma } from "@/lib/data/prisma";
 import {
   getOrCreateLocalTrader,
   isDatabasePersistenceConfigured,
 } from "@/lib/persistence/local-user";
 import type { BacktestResult, BacktestTrade, MultiDayBacktestResult } from "@/types/backtest";
+import type {
+  BacktestReportFilters,
+  BacktestReportKind,
+  BacktestReportRecord,
+} from "@/types/backtest-report";
 
-export type PersistableBacktestResult = BacktestResult | MultiDayBacktestResult;
-
-export type BacktestPersistenceRecord = {
-  id: string;
-  name: string;
-  status: string;
-  kind: "single_day" | "multi_day";
-  underlying: string;
-  dataSource: string;
-  startedAt: string | null;
-  endedAt: string | null;
-  trades: number;
-  netPnl: string;
-  winRate: string;
-  maxDrawdown: string;
-  savedAt: string;
-  liveOrdersEnabled: false;
-};
+export type BacktestPersistenceRecord = BacktestReportRecord;
 
 export type BacktestPersistenceResult = {
   persistence: {
@@ -90,7 +83,7 @@ function metadataValue(metrics: Prisma.JsonValue | null, key: string) {
   return stringField(metadata[key]);
 }
 
-function kindForResult(result: PersistableBacktestResult): BacktestPersistenceRecord["kind"] {
+function kindForResult(result: PersistableBacktestResult): BacktestReportKind {
   return "sessions" in result ? "multi_day" : "single_day";
 }
 
@@ -128,27 +121,7 @@ function expiryForTrade(result: PersistableBacktestResult, trade: BacktestTrade)
   return session?.metadata.expiry ?? result.sessions[0]?.metadata.expiry ?? null;
 }
 
-export function backtestRecordFromResult(
-  result: PersistableBacktestResult,
-  savedAt = new Date(),
-): BacktestPersistenceRecord {
-  return {
-    id: result.metadata.id,
-    name: result.metadata.name,
-    status: "COMPLETED",
-    kind: kindForResult(result),
-    underlying: result.metadata.underlying,
-    dataSource: result.metadata.dataSource,
-    startedAt: result.metadata.startedAt || null,
-    endedAt: result.metadata.endedAt || null,
-    trades: result.summary.trades,
-    netPnl: result.summary.netPnl,
-    winRate: result.summary.winRate,
-    maxDrawdown: result.summary.maxDrawdown,
-    savedAt: savedAt.toISOString(),
-    liveOrdersEnabled: false,
-  };
-}
+export const backtestRecordFromResult = backtestReportRecordFromResult;
 
 function disabledPersistence(backtest: BacktestPersistenceRecord | null = null): BacktestPersistenceResult {
   return {
@@ -306,9 +279,11 @@ export function backtestRecordFromDatabase(
 
 export async function listPersistedBacktests({
   client = prisma,
+  filters,
   limit = 20,
 }: {
   client?: PrismaExecutor;
+  filters?: BacktestReportFilters;
   limit?: number;
 } = {}): Promise<BacktestPersistenceResult> {
   if (!isDatabasePersistenceConfigured()) {
@@ -323,7 +298,7 @@ export async function listPersistedBacktests({
     orderBy: {
       updatedAt: "desc",
     },
-    take: Math.min(Math.max(limit, 1), 50),
+    take: 50,
     include: {
       _count: {
         select: {
@@ -332,7 +307,8 @@ export async function listPersistedBacktests({
       },
     },
   });
-  const backtests = rows.map(backtestRecordFromDatabase);
+  const filteredBacktests = filterBacktestReportRecords(rows.map(backtestRecordFromDatabase), filters);
+  const backtests = filteredBacktests.slice(0, Math.min(Math.max(limit, 1), 50));
 
   return {
     persistence: {
@@ -354,7 +330,7 @@ export async function persistBacktestResult({
   client?: PrismaClient;
   result: PersistableBacktestResult;
 }): Promise<BacktestPersistenceResult> {
-  const fallbackRecord = backtestRecordFromResult(result);
+  const fallbackRecord = backtestReportRecordFromResult(result);
 
   if (!isDatabasePersistenceConfigured()) {
     return disabledPersistence(fallbackRecord);

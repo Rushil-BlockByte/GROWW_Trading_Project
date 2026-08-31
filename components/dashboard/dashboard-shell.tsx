@@ -32,6 +32,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  backtestReportRecordFromResult,
+  filterBacktestReportRecords,
+  isBacktestReportRecord,
+  summarizeBacktestReportRecords,
+} from "@/lib/backtesting/backtest-reporting";
 import { getMarketDataModeLabel } from "@/lib/config/market";
 import {
   calculatePaperJournalSummary,
@@ -58,6 +64,10 @@ import type {
   BacktestTradeOutcome,
   MultiDayBacktestResult,
 } from "@/types/backtest";
+import type {
+  BacktestReportFilters,
+  BacktestReportRecord,
+} from "@/types/backtest-report";
 import type { PriceLevel } from "@/types/indicators";
 import type {
   OptionChainContext,
@@ -108,6 +118,8 @@ type BacktestApiResponse = {
     status: "database" | "local_only" | "error";
     message: string;
   };
+  backtest?: unknown;
+  backtests?: unknown[];
   savedCount?: number;
   liveOrdersEnabled?: false;
   message?: string;
@@ -116,6 +128,37 @@ type BacktestApiResponse = {
 type BacktestSaveState = PersistenceUiState & {
   busy: boolean;
 };
+
+const BACKTEST_REPORTS_UPDATED_EVENT = "groww-backtests-updated";
+
+const reportUnderlyingOptions: Array<{
+  label: string;
+  value: NonNullable<BacktestReportFilters["underlying"]>;
+}> = [
+  { label: "All", value: "ALL" },
+  { label: "NIFTY", value: "NIFTY" },
+  { label: "BANKNIFTY", value: "BANKNIFTY" },
+  { label: "FINNIFTY", value: "FINNIFTY" },
+];
+
+const reportKindOptions: Array<{
+  label: string;
+  value: NonNullable<BacktestReportFilters["kind"]>;
+}> = [
+  { label: "All", value: "all" },
+  { label: "Single", value: "single_day" },
+  { label: "Multi", value: "multi_day" },
+];
+
+const reportResultOptions: Array<{
+  label: string;
+  value: NonNullable<BacktestReportFilters["result"]>;
+}> = [
+  { label: "All", value: "all" },
+  { label: "Profit", value: "profitable" },
+  { label: "Loss", value: "losing" },
+  { label: "Flat", value: "flat" },
+];
 
 const numberFormat = new Intl.NumberFormat("en-IN", {
   maximumFractionDigits: 2,
@@ -297,6 +340,48 @@ function parseJournalResponseEntries(data: JournalApiResponse) {
   return Array.isArray(data.entries) ? data.entries.filter(isPaperJournalEntry) : [];
 }
 
+function parseBacktestReportResponseRecords(data: BacktestApiResponse) {
+  const records = Array.isArray(data.backtests)
+    ? data.backtests
+    : data.backtest
+      ? [data.backtest]
+      : [];
+
+  return records.filter(isBacktestReportRecord);
+}
+
+function reportSavedAtFromResult(result: BacktestResult | MultiDayBacktestResult) {
+  const candidate = result.metadata.endedAt || result.metadata.startedAt;
+  const date = candidate ? new Date(candidate) : new Date("1970-01-01T00:00:00.000Z");
+
+  return Number.isNaN(date.getTime()) ? new Date("1970-01-01T00:00:00.000Z") : date;
+}
+
+function formatReportKind(kind: BacktestReportRecord["kind"]) {
+  return kind === "multi_day" ? "Multi-day" : "Single-day";
+}
+
+function formatReportDateTime(value: string | null) {
+  if (!value) return "Pending";
+
+  return new Date(value).toLocaleString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+function pnlVariant(value: string) {
+  const pnl = Number(value);
+
+  if (pnl > 0) return "success" as const;
+  if (pnl < 0) return "destructive" as const;
+
+  return "muted" as const;
+}
+
 export function DashboardShell({
   initialBacktestResult,
   initialMultiDayBacktestResult,
@@ -389,6 +474,11 @@ export function DashboardShell({
           <MultiDayBacktestPanel result={initialMultiDayBacktestResult} />
         </section>
 
+        <BacktestReportsPanel
+          initialBacktestResult={initialBacktestResult}
+          initialMultiDayBacktestResult={initialMultiDayBacktestResult}
+        />
+
         <section className="grid gap-4 xl:grid-cols-5">
           <RiskDashboard
             dailyLossLimit={dailyLossLimit}
@@ -467,6 +557,8 @@ function useBacktestPersistence(result: BacktestResult | MultiDayBacktestResult)
         ...persistenceUiState(data.persistence),
         busy: false,
       });
+
+      window.dispatchEvent(new Event(BACKTEST_REPORTS_UPDATED_EVENT));
     } catch (error) {
       setState({
         busy: false,
@@ -478,6 +570,319 @@ function useBacktestPersistence(result: BacktestResult | MultiDayBacktestResult)
   }, [result]);
 
   return { save, state };
+}
+
+function BacktestReportsPanel({
+  initialBacktestResult,
+  initialMultiDayBacktestResult,
+}: Pick<DashboardShellProps, "initialBacktestResult" | "initialMultiDayBacktestResult">) {
+  const fallbackRecords = useMemo(
+    () => [
+      backtestReportRecordFromResult(
+        initialBacktestResult,
+        reportSavedAtFromResult(initialBacktestResult),
+      ),
+      backtestReportRecordFromResult(
+        initialMultiDayBacktestResult,
+        reportSavedAtFromResult(initialMultiDayBacktestResult),
+      ),
+    ],
+    [initialBacktestResult, initialMultiDayBacktestResult],
+  );
+  const [records, setRecords] = useState<BacktestReportRecord[]>(() => fallbackRecords);
+  const [filters, setFilters] = useState<Required<BacktestReportFilters>>({
+    underlying: "ALL",
+    kind: "all",
+    result: "all",
+  });
+  const [loading, setLoading] = useState(false);
+  const [persistence, setPersistence] = useState<PersistenceUiState>({
+    label: "Local sample",
+    message: "Showing current replay samples until saved database runs are available.",
+    variant: "muted",
+  });
+
+  const loadReports = useCallback(async () => {
+    setLoading(true);
+
+    try {
+      const response = await fetch("/api/backtests?limit=20", { cache: "no-store" });
+      const data = (await response.json()) as BacktestApiResponse;
+
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.message ?? data.persistence?.message ?? "Backtest reports failed.");
+      }
+
+      const apiRecords = parseBacktestReportResponseRecords(data);
+
+      if (data.persistence?.status === "database" && apiRecords.length) {
+        setRecords(apiRecords);
+        setPersistence(persistenceUiState(data.persistence));
+        return;
+      }
+
+      setRecords(fallbackRecords);
+
+      if (data.persistence?.status === "error") {
+        setPersistence({
+          label: "Local sample",
+          message: "Database is unavailable. Showing current replay samples.",
+          variant: "warning",
+        });
+        return;
+      }
+
+      if (data.persistence?.status === "database") {
+        setPersistence({
+          label: "Sample fallback",
+          message: "No saved database runs yet. Showing current replay samples.",
+          variant: "warning",
+        });
+        return;
+      }
+
+      setPersistence(persistenceUiState(data.persistence));
+    } catch (error) {
+      setRecords(fallbackRecords);
+      setPersistence({
+        label: "Local sample",
+        message:
+          error instanceof Error
+            ? `Report sync failed. ${error.message}`
+            : "Showing current replay samples.",
+        variant: "warning",
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [fallbackRecords]);
+
+  useEffect(() => {
+    const initialLoad = window.setTimeout(() => {
+      void loadReports();
+    }, 0);
+
+    const refreshReports = () => void loadReports();
+
+    window.addEventListener(BACKTEST_REPORTS_UPDATED_EVENT, refreshReports);
+
+    return () => {
+      window.clearTimeout(initialLoad);
+      window.removeEventListener(BACKTEST_REPORTS_UPDATED_EVENT, refreshReports);
+    };
+  }, [loadReports]);
+
+  const filteredRecords = useMemo(
+    () => filterBacktestReportRecords(records, filters),
+    [filters, records],
+  );
+  const summary = useMemo(
+    () => summarizeBacktestReportRecords(filteredRecords),
+    [filteredRecords],
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3 className="h-5 w-5 text-primary" />
+              Backtest Reports
+            </CardTitle>
+            <CardDescription>
+              {summary.runCount} runs in view from {records.length} loaded reports
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={persistence.variant}>{persistence.label}</Badge>
+            <Badge variant="success">No live orders</Badge>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={loading}
+              onClick={() => void loadReports()}
+            >
+              <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div className="grid gap-2">
+            <p className="flex items-center gap-2 text-xs font-medium uppercase text-muted-foreground">
+              <Filter className="h-3.5 w-3.5" />
+              Underlying
+            </p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+              {reportUnderlyingOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={filters.underlying === option.value ? "default" : "outline"}
+                  onClick={() =>
+                    setFilters((current) => ({ ...current, underlying: option.value }))
+                  }
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Run Type</p>
+            <div className="grid grid-cols-3 gap-2">
+              {reportKindOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={filters.kind === option.value ? "default" : "outline"}
+                  onClick={() => setFilters((current) => ({ ...current, kind: option.value }))}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <p className="text-xs font-medium uppercase text-muted-foreground">Result</p>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2 xl:grid-cols-4">
+              {reportResultOptions.map((option) => (
+                <Button
+                  key={option.value}
+                  type="button"
+                  size="sm"
+                  variant={filters.result === option.value ? "default" : "outline"}
+                  onClick={() => setFilters((current) => ({ ...current, result: option.value }))}
+                >
+                  {option.label}
+                </Button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3 xl:grid-cols-6">
+          <Metric label="Runs" value={String(summary.runCount)} />
+          <Metric label="Net P&L" value={formatInr(summary.netPnl)} />
+          <Metric label="Trades" value={String(summary.trades)} />
+          <Metric label="Avg win rate" value={`${summary.averageWinRate}%`} />
+          <Metric label="Max drawdown" value={formatInr(summary.maxDrawdown)} />
+          <Metric label="Winners" value={String(summary.winningRuns)} />
+        </div>
+
+        <div className="grid gap-2 lg:grid-cols-2">
+          <BacktestReportHighlight label="Best run" record={summary.bestRun} />
+          <BacktestReportHighlight label="Worst run" record={summary.worstRun} />
+        </div>
+
+        <div className="overflow-x-auto rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Run</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead className="text-right">Net</TableHead>
+                <TableHead className="text-right">Win</TableHead>
+                <TableHead className="text-right">Drawdown</TableHead>
+                <TableHead>Saved</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filteredRecords.length ? (
+                filteredRecords.map((record) => (
+                  <BacktestReportRow key={record.id} record={record} />
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell
+                    colSpan={6}
+                    className="h-20 text-center text-sm text-muted-foreground"
+                  >
+                    No reports match these filters.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+
+        <p className="text-xs text-muted-foreground">{persistence.message}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function BacktestReportHighlight({
+  label,
+  record,
+}: {
+  label: string;
+  record: BacktestReportRecord | null;
+}) {
+  return (
+    <div className="grid gap-2 rounded-md border bg-muted/35 px-3 py-2 text-sm">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
+        {record ? (
+          <Badge variant={pnlVariant(record.netPnl)}>{formatInr(record.netPnl)}</Badge>
+        ) : (
+          <Badge variant="muted">No run</Badge>
+        )}
+      </div>
+      {record ? (
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{record.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {formatReportKind(record.kind)} | {record.trades} trades | {record.winRate}% wins
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-muted-foreground">No run available in this view.</p>
+      )}
+    </div>
+  );
+}
+
+function BacktestReportRow({ record }: { record: BacktestReportRecord }) {
+  return (
+    <TableRow>
+      <TableCell className="min-w-56">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{record.name}</p>
+          <p className="text-xs text-muted-foreground">
+            {record.underlying} | {record.dataSource.replaceAll("_", " ")}
+          </p>
+        </div>
+      </TableCell>
+      <TableCell className="whitespace-nowrap">
+        <Badge variant={record.kind === "multi_day" ? "success" : "outline"}>
+          {formatReportKind(record.kind)}
+        </Badge>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">
+        <span className={Number(record.netPnl) >= 0 ? "text-emerald-700" : "text-destructive"}>
+          {formatInr(record.netPnl)}
+        </span>
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-right tabular-nums">
+        {record.winRate}%
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-right tabular-nums">
+        {formatInr(record.maxDrawdown)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+        {formatReportDateTime(record.savedAt)}
+      </TableCell>
+    </TableRow>
+  );
 }
 
 function MultiDayBacktestPanel({ result }: { result: MultiDayBacktestResult }) {

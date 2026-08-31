@@ -172,3 +172,5 @@ Phase 9 aggregates risk and P&L across replay sessions while preserving per-day 
 Phase 10 can feed replay with real Kite option historical candles for the selected ATM CE/PE band. Kite historical candles provide traded OHLC, volume, and optional OI, but not historical bid/ask depth. Backtest liquidity checks therefore use an explicit spread assumption for bid/ask, defaulting to `1.00%`. This is still paper-only and must not be treated as proof of live execution quality.
 
 Phase 11 persists paper journal entries and backtest runs when PostgreSQL is configured. Persistence is a review and accountability layer only; it does not relax risk gates, enable broker orders, or make any backtest result a recommendation.
+
+Phase 12 reports summarize saved and sample backtests for review. These summaries remain paper-only diagnostics; high historical P&L, win rate, or best-run labels must not override daily loss, sizing, liquidity, or no-trade rules.
