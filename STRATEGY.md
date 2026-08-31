@@ -236,3 +236,5 @@ Rules:
 - Expiry availability respected
 
 Phase 8 implements the first deterministic replay for the VWAP breakout strategy. It evaluates candles sequentially, enters only on the next candle after confirmation, and records skipped signals when risk or liquidity prevents a valid paper-sized trade.
+
+Phase 9 aggregates independent replay sessions into a multi-day result. Each session starts with its own historical context so one day cannot leak candles into another day.

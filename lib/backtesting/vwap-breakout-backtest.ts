@@ -12,11 +12,14 @@ import {
 import type {
   BacktestEquityPoint,
   BacktestExitReason,
-  BacktestOptionRowsFactory,
   BacktestResult,
+  BacktestSessionInput,
+  BacktestOptionRowsFactory,
   BacktestRunInput,
   BacktestTrade,
   BacktestTradeOutcome,
+  MultiDayBacktestInput,
+  MultiDayBacktestResult,
 } from "@/types/backtest";
 import type { IndicatorCandle, IndicatorContext, PriceLevel } from "@/types/indicators";
 import type { DataQualityStatus, MarketRegime, UnderlyingSymbol } from "@/types/market";
@@ -24,9 +27,11 @@ import type { OptionChainContext, OptionLegLiquidity, OptionSide } from "@/types
 import type { StrategyDirection, StrategyEntryPlan } from "@/types/strategy";
 
 export const SAMPLE_BACKTEST_ID = "SIM-VWAP-BREAKOUT-2026-09-01";
+export const SAMPLE_MULTI_DAY_BACKTEST_ID = "SIM-VWAP-BREAKOUT-MULTI-DAY";
 export const SAMPLE_BACKTEST_EXPIRY = "2026-09-03";
 
 const DEFAULT_BACKTEST_NAME = "Phase 8 simulated VWAP breakout replay";
+const DEFAULT_MULTI_DAY_BACKTEST_NAME = "Phase 9 simulated multi-day VWAP breakout replay";
 const DEFAULT_BACKTEST_WARMUP_CANDLES = 50;
 const DEFAULT_BACKTEST_COOLDOWN_CANDLES = 5;
 const DEFAULT_SLIPPAGE_PERCENT = "0.10";
@@ -503,6 +508,31 @@ function summarizeBacktest({
   };
 }
 
+function aggregateBacktestResults({
+  trades,
+  evaluatedSignals,
+  confirmedSignals,
+  skippedSignals,
+}: {
+  trades: BacktestTrade[];
+  evaluatedSignals: number;
+  confirmedSignals: number;
+  skippedSignals: number;
+}) {
+  const equityCurve = buildEquityCurve(trades);
+
+  return {
+    equityCurve,
+    summary: summarizeBacktest({
+      trades,
+      equityCurve,
+      evaluatedSignals,
+      confirmedSignals,
+      skippedSignals,
+    }),
+  };
+}
+
 export function createSampleBacktestCandles(): IndicatorCandle[] {
   let previousClose = new Decimal("25090");
 
@@ -730,7 +760,12 @@ export function runVwapBreakoutBacktest(input: BacktestRunInput): BacktestResult
     openTrade = created.trade;
   }
 
-  const equityCurve = buildEquityCurve(trades);
+  const aggregated = aggregateBacktestResults({
+    trades,
+    evaluatedSignals,
+    confirmedSignals,
+    skippedSignals,
+  });
   const startedAt = candles[0]?.startTime ?? "";
   const endedAt = candles.at(-1)?.startTime ?? "";
 
@@ -752,15 +787,9 @@ export function runVwapBreakoutBacktest(input: BacktestRunInput): BacktestResult
       dataSource: input.dataSource ?? "USER_SUPPLIED",
       liveOrdersEnabled: false,
     },
-    summary: summarizeBacktest({
-      trades,
-      equityCurve,
-      evaluatedSignals,
-      confirmedSignals,
-      skippedSignals,
-    }),
+    summary: aggregated.summary,
     trades,
-    equityCurve,
+    equityCurve: aggregated.equityCurve,
     warnings,
   };
 }
@@ -779,5 +808,138 @@ export function runSampleVwapBreakoutBacktest() {
       riskPerTradePercent: "2",
     },
     dataSource: "SIMULATED_HISTORICAL_REPLAY",
+  });
+}
+
+function shiftCandlesToSessionDate(candles: IndicatorCandle[], sessionDate: string) {
+  const sessionStart = new Date(`${sessionDate}T03:45:00.000Z`);
+
+  return candles.map((candle, index) => ({
+    ...candle,
+    startTime: new Date(sessionStart.getTime() + index * 60_000).toISOString(),
+  }));
+}
+
+function sessionWithDate({
+  date,
+  id,
+  marketRegimeForCandle,
+}: {
+  date: string;
+  id: string;
+  marketRegimeForCandle?: BacktestSessionInput["marketRegimeForCandle"];
+}): BacktestSessionInput {
+  return {
+    id,
+    date,
+    candles: shiftCandlesToSessionDate(createSampleBacktestCandles(), date),
+    previousDay: SAMPLE_PREVIOUS_DAY,
+    expiry: SAMPLE_BACKTEST_EXPIRY,
+    underlying: "NIFTY",
+    dataSource: "SIMULATED_HISTORICAL_REPLAY",
+    marketRegimeForCandle,
+  };
+}
+
+export function createSampleMultiDayBacktestSessions(): BacktestSessionInput[] {
+  return [
+    sessionWithDate({
+      id: "DAY-2026-09-01",
+      date: "2026-09-01",
+    }),
+    sessionWithDate({
+      id: "DAY-2026-09-02",
+      date: "2026-09-02",
+      marketRegimeForCandle: () => "SIDEWAYS",
+    }),
+    sessionWithDate({
+      id: "DAY-2026-09-03",
+      date: "2026-09-03",
+    }),
+  ];
+}
+
+export function runMultiDayVwapBreakoutBacktest({
+  id = SAMPLE_MULTI_DAY_BACKTEST_ID,
+  name = DEFAULT_MULTI_DAY_BACKTEST_NAME,
+  sessions,
+  risk = {
+    ...DEFAULT_RISK_CONFIGURATION,
+    tradingCapital: "100000",
+    riskPerTradePercent: "2",
+  },
+  lotSize,
+  warmupCandles,
+  maximumTradesPerSession,
+  cooldownCandles,
+  slippagePercent,
+  brokeragePerOrder,
+}: MultiDayBacktestInput): MultiDayBacktestResult {
+  const results = sessions.map((session) =>
+    runVwapBreakoutBacktest({
+      ...session,
+      id: `${id}-${session.id}`,
+      name: session.label ?? `${name} ${session.date}`,
+      risk: session.risk ?? risk,
+      lotSize: session.lotSize ?? lotSize,
+      warmupCandles: session.warmupCandles ?? warmupCandles,
+      maximumTrades: session.maximumTrades ?? maximumTradesPerSession,
+      cooldownCandles: session.cooldownCandles ?? cooldownCandles,
+      slippagePercent: session.slippagePercent ?? slippagePercent,
+      brokeragePerOrder: session.brokeragePerOrder ?? brokeragePerOrder,
+      dataSource: session.dataSource ?? "USER_SUPPLIED",
+    }),
+  );
+  const trades = results.flatMap((result, sessionIndex) =>
+    result.trades.map((trade) => ({
+      ...trade,
+      id: `${sessions[sessionIndex].id}-${trade.id}`,
+    })),
+  );
+  const aggregated = aggregateBacktestResults({
+    trades,
+    evaluatedSignals: results.reduce((total, result) => total + result.summary.evaluatedSignals, 0),
+    confirmedSignals: results.reduce((total, result) => total + result.summary.confirmedSignals, 0),
+    skippedSignals: results.reduce((total, result) => total + result.summary.skippedSignals, 0),
+  });
+  const startedAt = results[0]?.metadata.startedAt ?? "";
+  const endedAt = results.at(-1)?.metadata.endedAt ?? "";
+  const firstSession = sessions[0];
+
+  return {
+    metadata: {
+      id,
+      name,
+      strategyName: VWAP_BREAKOUT_STRATEGY_NAME,
+      strategyVersion: VWAP_BREAKOUT_STRATEGY_VERSION,
+      sessionCount: sessions.length,
+      startedAt,
+      endedAt,
+      underlying: firstSession?.underlying ?? "NIFTY",
+      dataSource: firstSession?.dataSource ?? "USER_SUPPLIED",
+      liveOrdersEnabled: false,
+    },
+    summary: aggregated.summary,
+    sessions: results.map((result, index) => ({
+      id: sessions[index].id,
+      date: sessions[index].date,
+      label: sessions[index].label ?? sessions[index].date,
+      metadata: result.metadata,
+      summary: result.summary,
+      warnings: result.warnings,
+    })),
+    trades,
+    equityCurve: aggregated.equityCurve,
+    warnings: results.flatMap((result, index) =>
+      result.warnings.map((warning) => `${sessions[index].date}: ${warning}`),
+    ),
+  };
+}
+
+export function runSampleMultiDayVwapBreakoutBacktest() {
+  return runMultiDayVwapBreakoutBacktest({
+    id: SAMPLE_MULTI_DAY_BACKTEST_ID,
+    name: DEFAULT_MULTI_DAY_BACKTEST_NAME,
+    sessions: createSampleMultiDayBacktestSessions(),
   });
 }

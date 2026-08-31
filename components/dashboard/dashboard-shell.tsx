@@ -23,6 +23,7 @@ import {
   Save,
   ShieldAlert,
   ShieldCheck,
+  TrendingUp,
   WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -44,7 +45,12 @@ import {
 import { DEFAULT_RISK_CONFIGURATION } from "@/lib/risk/defaults";
 import { calculateDailyLossLimit, calculatePositionSize } from "@/lib/risk/position-sizing";
 import { createSimulatedMarketSnapshot } from "@/lib/simulation/market-snapshot";
-import type { BacktestResult, BacktestTrade, BacktestTradeOutcome } from "@/types/backtest";
+import type {
+  BacktestResult,
+  BacktestTrade,
+  BacktestTradeOutcome,
+  MultiDayBacktestResult,
+} from "@/types/backtest";
 import type { PriceLevel } from "@/types/indicators";
 import type {
   OptionChainContext,
@@ -58,6 +64,7 @@ import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/st
 
 type DashboardShellProps = {
   initialBacktestResult: BacktestResult;
+  initialMultiDayBacktestResult: MultiDayBacktestResult;
   initialSnapshot: SimulatedMarketSnapshot;
 };
 
@@ -189,6 +196,7 @@ function formatBacktestWindow(startedAt: string, endedAt: string) {
 
 export function DashboardShell({
   initialBacktestResult,
+  initialMultiDayBacktestResult,
   initialSnapshot,
 }: DashboardShellProps) {
   const [step, setStep] = useState(0);
@@ -273,7 +281,10 @@ export function DashboardShell({
           />
         </section>
 
-        <BacktestSummaryPanel result={initialBacktestResult} />
+        <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <BacktestSummaryPanel result={initialBacktestResult} />
+          <MultiDayBacktestPanel result={initialMultiDayBacktestResult} />
+        </section>
 
         <section className="grid gap-4 xl:grid-cols-4">
           <RiskDashboard
@@ -316,6 +327,61 @@ export function DashboardShell({
         </section>
       </div>
     </main>
+  );
+}
+
+function MultiDayBacktestPanel({ result }: { result: MultiDayBacktestResult }) {
+  const { metadata, summary } = result;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-accent" />
+              Multi-Day Replay
+            </CardTitle>
+            <CardDescription>
+              {metadata.sessionCount} sessions, {summary.evaluatedSignals} candles evaluated
+            </CardDescription>
+          </div>
+          <Badge variant="success">Read-only</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Metric label="Net P&L" value={formatInr(summary.netPnl)} />
+          <Metric label="Win rate" value={`${summary.winRate}%`} />
+          <Metric label="Trades" value={String(summary.trades)} />
+          <Metric label="Skipped" value={String(summary.skippedSignals)} />
+          <Metric label="Expectancy" value={formatInr(summary.expectancy)} />
+          <Metric label="Max drawdown" value={formatInr(summary.maxDrawdown)} />
+        </div>
+
+        <div className="grid gap-2">
+          {result.sessions.map((session) => (
+            <div
+              key={session.id}
+              className="grid grid-cols-[1fr_auto_auto] items-center gap-3 rounded-md border bg-muted/35 px-3 py-2 text-sm"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{session.label}</p>
+                <p className="text-xs text-muted-foreground">
+                  {session.summary.confirmedSignals} confirmed, {session.summary.trades} trades
+                </p>
+              </div>
+              <Badge variant={session.summary.trades ? "success" : "muted"}>
+                {session.summary.trades ? "Traded" : "No trade"}
+              </Badge>
+              <span className="text-right text-sm font-semibold tabular-nums">
+                {formatInr(session.summary.netPnl)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -166,3 +166,5 @@ Phase 8 replay results include:
 - Skipped trades when one valid lot cannot be sized
 
 Backtest P&L is a simulation result only. It must not be treated as live execution quality or a profit guarantee.
+
+Phase 9 aggregates risk and P&L across replay sessions while preserving per-day summaries. Real Kite historical candles can feed the underlying side of the replay, but option quotes remain modeled until option-history ingestion is added.

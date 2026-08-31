@@ -140,3 +140,59 @@ export type BacktestResult = {
   equityCurve: BacktestEquityPoint[];
   warnings: string[];
 };
+
+export type BacktestSessionInput = Omit<
+  BacktestRunInput,
+  "id" | "name" | "candles" | "previousDay" | "dataSource"
+> & {
+  id: string;
+  date: string;
+  label?: string;
+  candles: IndicatorCandle[];
+  previousDay: BacktestPreviousDayContext;
+  dataSource?: BacktestDataSource;
+};
+
+export type MultiDayBacktestInput = {
+  id?: string;
+  name?: string;
+  sessions: BacktestSessionInput[];
+  risk?: RiskConfiguration;
+  lotSize?: number;
+  warmupCandles?: number;
+  maximumTradesPerSession?: number;
+  cooldownCandles?: number;
+  slippagePercent?: string;
+  brokeragePerOrder?: string;
+};
+
+export type BacktestSessionResult = {
+  id: string;
+  date: string;
+  label: string;
+  metadata: BacktestMetadata;
+  summary: BacktestSummary;
+  warnings: string[];
+};
+
+export type MultiDayBacktestMetadata = {
+  id: string;
+  name: string;
+  strategyName: string;
+  strategyVersion: string;
+  sessionCount: number;
+  startedAt: string;
+  endedAt: string;
+  underlying: UnderlyingSymbol;
+  dataSource: BacktestDataSource;
+  liveOrdersEnabled: false;
+};
+
+export type MultiDayBacktestResult = {
+  metadata: MultiDayBacktestMetadata;
+  summary: BacktestSummary;
+  sessions: BacktestSessionResult[];
+  trades: BacktestTrade[];
+  equityCurve: BacktestEquityPoint[];
+  warnings: string[];
+};

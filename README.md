@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 8 Status
+## Phase 9 Status
 
-Implemented through Phase 8:
+Implemented through Phase 9:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -59,13 +59,18 @@ Implemented through Phase 8:
 - Slippage, brokerage, lot-size, and position-sizing assumptions in replay results
 - Simulation API endpoint at `/api/simulation/phase8`
 - Dashboard backtest replay summary with net P&L, win rate, costs, and drawdown
-- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, and backtest replay behavior
+- Server-side Kite historical candle adapter
+- Read-only historical candle endpoint at `/api/kite/historical`
+- Multi-day VWAP breakout replay aggregation
+- Simulation API endpoint at `/api/simulation/phase9`
+- Dashboard multi-day replay summary with per-session results
+- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, backtest replay behavior, and Kite historical normalization
 
 Not implemented yet:
 
 - Database-backed paper-trade persistence
-- Kite historical candle ingestion
-- Multi-day backtesting
+- Real option historical candle ingestion
+- Production-scale backtest storage and reporting
 - AI explanation layer
 - Live order placement
 
@@ -83,7 +88,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-8 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, and a simulated historical backtest replay. Database-backed paper-trade persistence and Kite historical ingestion come later.
+Phases 1-9 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, and multi-day replay aggregation. Database-backed paper-trade persistence and real option-history ingestion come later.
 
 ## Technology
 
@@ -170,6 +175,14 @@ curl -X POST http://localhost:3000/api/kite/stream -H "Content-Type: application
 ```
 
 The dashboard also includes a Zerodha stream card. Starting the stream does not enable live orders. Strategy evaluation is deterministic and read-only.
+
+Fetch read-only Kite historical candles:
+
+```bash
+curl "http://localhost:3000/api/kite/historical?underlying=NIFTY&date=2026-08-31&interval=minute"
+```
+
+The historical endpoint uses server-side Kite credentials only and never enables live orders. Passing `instrumentToken` skips instrument-master resolution.
 
 ## Indicator Context
 
@@ -262,6 +275,21 @@ curl http://localhost:3000/api/simulation/phase8
 
 The current replay uses deterministic sample data. It is a framework for validating strategy mechanics, not evidence of real market profitability.
 
+Phase 9 adds multi-day aggregation:
+
+- Each day is replayed independently.
+- Overall P&L, costs, win rate, expectancy, and drawdown are aggregated across sessions.
+- Sideways sessions can produce no-trade days.
+- Trade IDs are made unique across sessions.
+
+The Phase 9 endpoint is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase9
+```
+
+Kite historical candles can be fetched through `/api/kite/historical`. Optional replay from that endpoint currently uses real underlying candles with modeled option quotes until real option historical ingestion is connected.
+
 ## Database
 
 The Prisma schema includes:
@@ -328,6 +356,7 @@ Tests cover:
 - Phase 6 deterministic strategy scoring and no-trade gates
 - Phase 7 paper-journal notes, guarded paper-trade capture, and P&L summaries
 - Phase 8 simulated backtest replay, next-candle entry, gated skips, and P&L summaries
+- Phase 9 Kite historical candle normalization and multi-day replay aggregation
 
 ## Market Hours
 

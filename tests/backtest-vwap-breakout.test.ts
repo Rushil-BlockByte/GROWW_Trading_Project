@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createSampleBacktestCandles,
+  runSampleMultiDayVwapBreakoutBacktest,
   runSampleVwapBreakoutBacktest,
   runVwapBreakoutBacktest,
 } from "../lib/backtesting/vwap-breakout-backtest";
@@ -67,5 +68,16 @@ describe("VWAP breakout backtest", () => {
     expect(result.summary.evaluatedSignals).toBe(0);
     expect(result.summary.trades).toBe(0);
     expect(result.warnings).toContain("Not enough candles for warmup and next-candle entry.");
+  });
+
+  it("aggregates the sample replay across multiple sessions", () => {
+    const result = runSampleMultiDayVwapBreakoutBacktest();
+
+    expect(result.metadata.sessionCount).toBe(3);
+    expect(result.summary.trades).toBe(2);
+    expect(result.summary.netPnl).toBe("1484.80");
+    expect(result.sessions.map((session) => session.summary.trades)).toEqual([1, 0, 1]);
+    expect(new Set(result.trades.map((trade) => trade.id)).size).toBe(result.trades.length);
+    expect(result.equityCurve.at(-1)?.equity).toBe("1484.80");
   });
 });
