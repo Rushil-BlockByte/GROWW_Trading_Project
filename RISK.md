@@ -89,6 +89,8 @@ Paper trading should be conservative.
 
 The entry price should use the live option price at the moment the user takes the paper trade. It must not backfill a better entry.
 
+Phase 7 paper captures use the watched option price from the current scanner snapshot and apply lot-size rounding through the risk engine. If the risk engine cannot size at least one valid lot, the journal records the rule violation for review.
+
 ## Liquidity Risk
 
 Reject contracts with:

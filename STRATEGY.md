@@ -203,6 +203,8 @@ Phase 6 keeps direction as `NO TRADE` unless all hard gates pass:
 - A liquid option contract exists on the setup side
 - Risk/reward meets the configured minimum
 
+Phase 7 reuses these same gates before allowing a paper-trade journal capture. Notes can be saved in any state, but paper trades require a confirmed directional setup and a tradable selected contract.
+
 ## Signal Lifecycle
 
 Valid states:

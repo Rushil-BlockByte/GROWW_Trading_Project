@@ -19,6 +19,7 @@ import {
   Power,
   Radio,
   RefreshCw,
+  Save,
   ShieldAlert,
   ShieldCheck,
   WifiOff,
@@ -28,7 +29,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
 import { getMarketDataModeLabel } from "@/lib/config/market";
+import {
+  calculatePaperJournalSummary,
+  canCreatePaperTrade,
+  createJournalNoteFromSnapshot,
+  createPaperTradeFromSnapshot,
+  PAPER_JOURNAL_STORAGE_KEY,
+  parsePaperJournalEntries,
+  serializePaperJournalEntries,
+} from "@/lib/paper-trading/journal";
 import { DEFAULT_RISK_CONFIGURATION } from "@/lib/risk/defaults";
 import { calculateDailyLossLimit, calculatePositionSize } from "@/lib/risk/position-sizing";
 import { createSimulatedMarketSnapshot } from "@/lib/simulation/market-snapshot";
@@ -38,6 +49,7 @@ import type {
   OptionLiquidityStatus,
   OptionOpenInterestLevel,
 } from "@/types/options";
+import type { PaperJournalEntry, PaperTradeJournalStatus } from "@/types/paper-trading";
 import type { LiveKiteStreamSnapshot } from "@/lib/zerodha/live-stream-service";
 import type { SimulatedMarketSnapshot, SimulatedUnderlying } from "@/types/simulation";
 import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/strategy";
@@ -125,6 +137,29 @@ function componentStatusVariant(status: StrategyComponentStatus) {
   if (status === "PASS") return "success" as const;
   if (status === "PARTIAL" || status === "PENDING") return "warning" as const;
   return "destructive" as const;
+}
+
+function paperStatusVariant(status: PaperTradeJournalStatus) {
+  if (status === "OPEN") return "success" as const;
+  if (status === "NOTE") return "secondary" as const;
+  if (status === "CLOSED") return "muted" as const;
+  return "destructive" as const;
+}
+
+function createJournalId() {
+  if (typeof window !== "undefined" && window.crypto?.randomUUID) {
+    return window.crypto.randomUUID();
+  }
+
+  return `journal-${Date.now()}`;
+}
+
+function formatJournalTime(value: string) {
+  return new Date(value).toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
 }
 
 export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
@@ -222,35 +257,7 @@ export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <BookOpenText className="h-5 w-5 text-accent" />
-                Paper Trade Journal
-              </CardTitle>
-              <CardDescription>No open paper trades</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3">
-              <div className="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">Unrealized P&L</span>
-                  <span className="tabular-nums">{formatInr(0)}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">Realized P&L</span>
-                  <span className="tabular-nums">{formatInr(0)}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="font-medium">Rule violations</span>
-                  <span className="tabular-nums">0</span>
-                </div>
-              </div>
-              <textarea
-                className="min-h-28 rounded-md border bg-background p-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                placeholder="What did I see? Did I follow the plan? Emotional state. Lesson."
-              />
-            </CardContent>
-          </Card>
+          <PaperTradeJournal snapshot={snapshot} />
 
           <Card>
             <CardHeader>
@@ -279,6 +286,153 @@ export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
         </section>
       </div>
     </main>
+  );
+}
+
+function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
+  const [entries, setEntries] = useState<PaperJournalEntry[]>([]);
+  const [notes, setNotes] = useState("");
+  const [journalReady, setJournalReady] = useState(false);
+  const paperTradeGuard = useMemo(() => canCreatePaperTrade(snapshot), [snapshot]);
+  const summary = useMemo(() => calculatePaperJournalSummary(entries), [entries]);
+  const latestEntries = entries.slice(0, 5);
+
+  useEffect(() => {
+    const loadJournal = window.setTimeout(() => {
+      const stored = window.localStorage.getItem(PAPER_JOURNAL_STORAGE_KEY);
+      setEntries(parsePaperJournalEntries(stored));
+      setJournalReady(true);
+    }, 0);
+
+    return () => window.clearTimeout(loadJournal);
+  }, []);
+
+  useEffect(() => {
+    if (!journalReady) return;
+
+    window.localStorage.setItem(PAPER_JOURNAL_STORAGE_KEY, serializePaperJournalEntries(entries));
+  }, [entries, journalReady]);
+
+  function saveNote() {
+    if (!notes.trim()) return;
+
+    const entry = createJournalNoteFromSnapshot({
+      id: createJournalId(),
+      now: new Date().toISOString(),
+      notes,
+      snapshot,
+    });
+
+    setEntries((currentEntries) => [entry, ...currentEntries]);
+    setNotes("");
+  }
+
+  function capturePaperTrade() {
+    if (!paperTradeGuard.allowed) return;
+
+    const entry = createPaperTradeFromSnapshot({
+      id: createJournalId(),
+      now: new Date().toISOString(),
+      notes,
+      snapshot,
+      risk: DEFAULT_RISK_CONFIGURATION,
+    });
+
+    setEntries((currentEntries) => [entry, ...currentEntries]);
+    setNotes("");
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <BookOpenText className="h-5 w-5 text-accent" />
+              Paper Trade Journal
+            </CardTitle>
+            <CardDescription>
+              {summary.openTrades} open, {summary.totalEntries} saved
+            </CardDescription>
+          </div>
+          <Badge variant={paperTradeGuard.allowed ? "success" : "warning"}>
+            {paperTradeGuard.allowed ? "Paper ready" : "Paper gated"}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Metric label="Unrealized P&L" value={formatInr(summary.unrealizedPnl)} />
+          <Metric label="Realized P&L" value={formatInr(summary.realizedPnl)} />
+          <Metric label="Notes" value={String(summary.notes)} />
+          <Metric label="Rule violations" value={String(summary.ruleViolations)} />
+        </div>
+
+        <Textarea
+          className="min-h-28"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          placeholder="What did I see? Did I follow the plan? Emotional state. Lesson."
+        />
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <Button type="button" variant="outline" disabled={!notes.trim()} onClick={saveNote}>
+            <Save className="h-4 w-4" />
+            Save Note
+          </Button>
+          <Button
+            type="button"
+            disabled={!paperTradeGuard.allowed}
+            onClick={capturePaperTrade}
+          >
+            <CircleDollarSign className="h-4 w-4" />
+            Capture Paper Trade
+          </Button>
+        </div>
+
+        {!paperTradeGuard.allowed ? (
+          <div className="rounded-md border bg-yellow-50 p-3 text-sm font-medium text-yellow-950">
+            {paperTradeGuard.reason}
+          </div>
+        ) : null}
+
+        <div className="grid gap-2">
+          {latestEntries.length ? (
+            latestEntries.map((entry) => <PaperJournalEntryRow key={entry.id} entry={entry} />)
+          ) : (
+            <div className="rounded-md border bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
+              No journal entries saved.
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PaperJournalEntryRow({ entry }: { entry: PaperJournalEntry }) {
+  const title = entry.optionSymbol ?? `${entry.underlying} ${entry.bias}`;
+  const detail =
+    entry.type === "PAPER_TRADE"
+      ? `Entry ${formatInr(entry.entryPrice ?? 0)} | Qty ${entry.quantity}`
+      : `Score ${entry.score}/100 | ${entry.quality}`;
+
+  return (
+    <div className="grid gap-2 rounded-md border bg-muted/35 px-3 py-2 text-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="truncate font-semibold">{title}</p>
+          <p className="text-xs text-muted-foreground">{detail}</p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-1">
+          <Badge variant={paperStatusVariant(entry.status)}>{entry.status}</Badge>
+          <span className="text-xs text-muted-foreground">{formatJournalTime(entry.createdAt)}</span>
+        </div>
+      </div>
+      {entry.notes ? (
+        <p className="line-clamp-2 text-sm text-muted-foreground">{entry.notes}</p>
+      ) : null}
+    </div>
   );
 }
 

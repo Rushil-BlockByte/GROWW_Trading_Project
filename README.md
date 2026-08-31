@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 6 Status
+## Phase 7 Status
 
-Implemented through Phase 6:
+Implemented through Phase 7:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -50,11 +50,15 @@ Implemented through Phase 6:
 - Hard gates that keep direction as `NO TRADE` until breakout, liquidity, risk/reward, data quality, and regime checks pass
 - Simulation API endpoint at `/api/simulation/phase6`
 - Dashboard score-component breakdown and watched level/option context
-- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, and Kite provider behavior
+- Local browser paper-trade journal persistence
+- Save-anytime observation notes tied to the current scanner snapshot
+- Guarded paper-trade capture from confirmed strategy setups only
+- Paper-trade summary metrics for open trades, notes, rule violations, and P&L
+- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, and paper-journal behavior
 
 Not implemented yet:
 
-- Paper-trade persistence
+- Database-backed paper-trade persistence
 - Historical backtesting
 - AI explanation layer
 - Live order placement
@@ -73,7 +77,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-6 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, and deterministic strategy scoring. Paper-trade persistence comes later.
+Phases 1-7 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, and a local paper-trade journal. Database-backed paper-trade persistence comes later.
 
 ## Technology
 
@@ -222,6 +226,17 @@ curl http://localhost:3000/api/simulation/phase6
 
 The score is not a probability of profit. It is an explainable checklist score for the configured setup.
 
+## Paper Trade Journal
+
+Phase 7 adds a local browser journal on the dashboard:
+
+- Notes can be saved in any scanner state.
+- Paper trades can be captured only when the strategy setup is confirmed, directional, liquid, and paper-only.
+- Position size uses the configured risk rules and lot rounding.
+- Saved entries stay in the browser under local storage and are not sent to live order execution.
+
+This is intentionally paper-only. It does not place broker orders and it does not bypass the strategy gates.
+
 ## Database
 
 The Prisma schema includes:
@@ -286,6 +301,7 @@ Tests cover:
 - Phase 4 indicator calculations and simulation context
 - Phase 5 option-chain context and liquidity gating
 - Phase 6 deterministic strategy scoring and no-trade gates
+- Phase 7 paper-journal notes, guarded paper-trade capture, and P&L summaries
 
 ## Market Hours
 
