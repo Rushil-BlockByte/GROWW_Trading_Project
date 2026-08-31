@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { InstrumentRepository } from "@/lib/instruments/instrument-repository";
-import {
-  runVwapBreakoutBacktest,
-  sampleBacktestOptionRowsForPrice,
-} from "@/lib/backtesting/vwap-breakout-backtest";
+import { runVwapBreakoutBacktest } from "@/lib/backtesting/vwap-breakout-backtest";
 import { getServerConfig } from "@/lib/config/env";
 import { downloadKiteInstruments } from "@/lib/zerodha/instruments-client";
 import { fetchKiteHistoricalCandles, isKiteHistoricalInterval } from "@/lib/zerodha/historical-data-client";
+import {
+  createHistoricalOptionRowsFactory,
+  defaultHistoricalOptionStrikeInterval,
+  fetchKiteHistoricalOptionUniverse,
+} from "@/lib/zerodha/option-historical-service";
 import { resolveIndexInstrument } from "@/lib/zerodha/live-universe";
 import type { BacktestPreviousDayContext } from "@/types/backtest";
 import type { UnderlyingSymbol } from "@/types/market";
@@ -47,6 +49,10 @@ function dateWindow(searchParams: URLSearchParams) {
   return { date, from, to };
 }
 
+function dateForExpiryLookup(date: string) {
+  return new Date(`${date}T12:00:00.000+05:30`);
+}
+
 function previousDayContext(searchParams: URLSearchParams): BacktestPreviousDayContext | null {
   const high = searchParams.get("previousHigh");
   const low = searchParams.get("previousLow");
@@ -65,12 +71,40 @@ function parseInstrumentToken(value: string | null) {
   return Number.isInteger(token) && token > 0 ? token : null;
 }
 
+function parseIntegerParam(value: string | null, name: string) {
+  if (value === null) return null;
+
+  const parsed = Number(value);
+
+  if (!Number.isInteger(parsed)) {
+    throw new Error(`${name} must be a whole number.`);
+  }
+
+  return parsed;
+}
+
+function includeOptionsParam(searchParams: URLSearchParams) {
+  return boolParam(searchParams.get("includeOptions")) || boolParam(searchParams.get("options"));
+}
+
+function optionOpenInterestParam(searchParams: URLSearchParams) {
+  const optionOnly = searchParams.get("optionOi") ?? searchParams.get("optionOI");
+
+  if (optionOnly !== null) return boolParam(optionOnly);
+
+  const shared = searchParams.get("oi");
+
+  return shared === null ? true : boolParam(shared);
+}
+
 export async function GET(request: NextRequest) {
   const config = getServerConfig();
   const { searchParams } = request.nextUrl;
   const interval = searchParams.get("interval") ?? "minute";
+  const kiteApiKey = config.kiteApiKey;
+  const kiteAccessToken = config.kiteAccessToken;
 
-  if (!config.kiteApiKey || !config.kiteAccessToken) {
+  if (!kiteApiKey || !kiteAccessToken) {
     return NextResponse.json(
       {
         ok: false,
@@ -95,14 +129,15 @@ export async function GET(request: NextRequest) {
   try {
     const { date, from, to } = dateWindow(searchParams);
     const underlying = parseUnderlying(searchParams.get("underlying"));
+    const includeOptions = includeOptionsParam(searchParams);
     let instrumentToken = parseInstrumentToken(searchParams.get("instrumentToken"));
     let tradingsymbol = searchParams.get("tradingsymbol") ?? null;
     let exchange = searchParams.get("exchange") ?? "NSE";
 
     if (!instrumentToken) {
       const instruments = await downloadKiteInstruments({
-        apiKey: config.kiteApiKey,
-        accessToken: config.kiteAccessToken,
+        apiKey: kiteApiKey,
+        accessToken: kiteAccessToken,
         exchange: "NSE",
       });
       const repository = new InstrumentRepository(instruments);
@@ -125,8 +160,8 @@ export async function GET(request: NextRequest) {
     }
 
     const historical = await fetchKiteHistoricalCandles({
-      apiKey: config.kiteApiKey,
-      accessToken: config.kiteAccessToken,
+      apiKey: kiteApiKey,
+      accessToken: kiteAccessToken,
       instrumentToken,
       interval,
       from,
@@ -134,6 +169,44 @@ export async function GET(request: NextRequest) {
       continuous: boolParam(searchParams.get("continuous")),
       includeOpenInterest: boolParam(searchParams.get("oi")),
     });
+    const optionHistorical = includeOptions
+      ? await (async () => {
+          const optionInstruments = await downloadKiteInstruments({
+            apiKey: kiteApiKey,
+            accessToken: kiteAccessToken,
+            exchange: "NFO",
+          });
+          const optionRepository = new InstrumentRepository(optionInstruments);
+          const expiry =
+            searchParams.get("expiry") ??
+            optionRepository.getNearestExpiry(underlying, dateForExpiryLookup(date));
+
+          if (!expiry) {
+            throw new Error(`Could not resolve a ${underlying} option expiry in the Kite NFO instrument master.`);
+          }
+
+          return fetchKiteHistoricalOptionUniverse({
+            apiKey: kiteApiKey,
+            accessToken: kiteAccessToken,
+            repository: optionRepository,
+            underlying,
+            underlyingLastPrice:
+              searchParams.get("underlyingLastPrice") ?? historical.candles[0]?.close ?? "0",
+            expiry,
+            strikeInterval:
+              parseIntegerParam(searchParams.get("strikeInterval"), "strikeInterval") ??
+              defaultHistoricalOptionStrikeInterval(underlying),
+            strikeWindow: parseIntegerParam(searchParams.get("strikeWindow"), "strikeWindow"),
+            interval,
+            from,
+            to,
+            includeOpenInterest: optionOpenInterestParam(searchParams),
+            spreadAssumptionPercent:
+              searchParams.get("spreadAssumptionPercent") ??
+              searchParams.get("optionSpreadPercent"),
+          });
+        })()
+      : null;
     const previousDay = previousDayContext(searchParams);
     const backtest =
       previousDay && boolParam(searchParams.get("backtest")) && historical.candles.length
@@ -141,11 +214,13 @@ export async function GET(request: NextRequest) {
             id: `KITE-${underlying}-${date}`,
             name: `Kite historical underlying replay ${date}`,
             underlying,
-            expiry: searchParams.get("expiry") ?? date,
+            expiry: optionHistorical?.request.expiry ?? searchParams.get("expiry") ?? date,
             candles: historical.candles,
             previousDay,
             dataSource: "USER_SUPPLIED",
-            optionRowsForPrice: sampleBacktestOptionRowsForPrice,
+            optionRowsForPrice: optionHistorical
+              ? createHistoricalOptionRowsFactory(optionHistorical)
+              : undefined,
           })
         : null;
 
@@ -160,9 +235,12 @@ export async function GET(request: NextRequest) {
         underlying,
       },
       historical,
+      optionHistorical,
       backtest,
       backtestAssumption: backtest
-        ? "Underlying candles came from Kite; option quotes are modeled until option historical ingestion is connected."
+        ? optionHistorical
+          ? "Underlying and option candles came from Kite; option bid/ask spread is estimated from the configured spread assumption."
+          : "Underlying candles came from Kite; option quotes are modeled by the replay engine."
         : null,
     });
   } catch (error) {

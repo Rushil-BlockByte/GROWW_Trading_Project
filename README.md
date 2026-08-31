@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 9 Status
+## Phase 10 Status
 
-Implemented through Phase 9:
+Implemented through Phase 10:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -64,12 +64,15 @@ Implemented through Phase 9:
 - Multi-day VWAP breakout replay aggregation
 - Simulation API endpoint at `/api/simulation/phase9`
 - Dashboard multi-day replay summary with per-session results
-- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, backtest replay behavior, and Kite historical normalization
+- Server-side Kite option historical candle ingestion for ATM CE/PE bands
+- Real option-history replay rows with explicit bid/ask spread assumptions
+- Simulation API endpoint at `/api/simulation/phase10`
+- Dashboard option-history readiness card
+- Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, backtest replay behavior, Kite historical normalization, and Kite option-history replay rows
 
 Not implemented yet:
 
 - Database-backed paper-trade persistence
-- Real option historical candle ingestion
 - Production-scale backtest storage and reporting
 - AI explanation layer
 - Live order placement
@@ -88,7 +91,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-9 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, and multi-day replay aggregation. Database-backed paper-trade persistence and real option-history ingestion come later.
+Phases 1-10 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, and real option historical candle ingestion for backtests. Database-backed paper-trade persistence and production-scale backtest storage come later.
 
 ## Technology
 
@@ -183,6 +186,14 @@ curl "http://localhost:3000/api/kite/historical?underlying=NIFTY&date=2026-08-31
 ```
 
 The historical endpoint uses server-side Kite credentials only and never enables live orders. Passing `instrumentToken` skips instrument-master resolution.
+
+Fetch underlying candles with nearby option historical candles:
+
+```bash
+curl "http://localhost:3000/api/kite/historical?underlying=NIFTY&date=2026-08-31&interval=minute&includeOptions=true&strikeWindow=1"
+```
+
+`includeOptions=true` downloads the Kite NFO instrument master, resolves the nearest or requested expiry, fetches the ATM CE/PE band, and builds replay-ready option rows. Historical bid/ask depth is not available from Kite candles, so replay liquidity checks use the configured spread assumption, defaulting to `1.00%`.
 
 ## Indicator Context
 
@@ -288,7 +299,22 @@ The Phase 9 endpoint is read-only:
 curl http://localhost:3000/api/simulation/phase9
 ```
 
-Kite historical candles can be fetched through `/api/kite/historical`. Optional replay from that endpoint currently uses real underlying candles with modeled option quotes until real option historical ingestion is connected.
+Kite historical candles can be fetched through `/api/kite/historical`. Optional replay from that endpoint uses modeled option quotes by default, or real Kite option historical candles when `includeOptions=true` is passed.
+
+Phase 10 adds real option historical candle ingestion:
+
+- `includeOptions=true` fetches nearby CE/PE option candles from Kite.
+- `strikeWindow` defaults to `1`, which means ATM plus one strike on each side.
+- `strikeWindow` is capped at `3`, which means at most 14 option contracts per request.
+- Option OHLC, volume, and optional OI come from Kite historical candles.
+- Historical bid/ask is estimated from `spreadAssumptionPercent` because Kite candles do not provide market depth.
+- Backtest replay uses real option-history rows when they are included.
+
+The Phase 10 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase10
+```
 
 ## Database
 
@@ -357,6 +383,7 @@ Tests cover:
 - Phase 7 paper-journal notes, guarded paper-trade capture, and P&L summaries
 - Phase 8 simulated backtest replay, next-candle entry, gated skips, and P&L summaries
 - Phase 9 Kite historical candle normalization and multi-day replay aggregation
+- Phase 10 Kite option historical ingestion, row alignment, spread assumptions, and strike-window caps
 
 ## Market Hours
 

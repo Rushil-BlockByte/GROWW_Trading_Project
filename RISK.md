@@ -167,4 +167,6 @@ Phase 8 replay results include:
 
 Backtest P&L is a simulation result only. It must not be treated as live execution quality or a profit guarantee.
 
-Phase 9 aggregates risk and P&L across replay sessions while preserving per-day summaries. Real Kite historical candles can feed the underlying side of the replay, but option quotes remain modeled until option-history ingestion is added.
+Phase 9 aggregates risk and P&L across replay sessions while preserving per-day summaries.
+
+Phase 10 can feed replay with real Kite option historical candles for the selected ATM CE/PE band. Kite historical candles provide traded OHLC, volume, and optional OI, but not historical bid/ask depth. Backtest liquidity checks therefore use an explicit spread assumption for bid/ask, defaulting to `1.00%`. This is still paper-only and must not be treated as proof of live execution quality.

@@ -45,6 +45,11 @@ import {
 import { DEFAULT_RISK_CONFIGURATION } from "@/lib/risk/defaults";
 import { calculateDailyLossLimit, calculatePositionSize } from "@/lib/risk/position-sizing";
 import { createSimulatedMarketSnapshot } from "@/lib/simulation/market-snapshot";
+import {
+  DEFAULT_HISTORICAL_OPTION_SPREAD_PERCENT,
+  DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW,
+  MAX_HISTORICAL_OPTION_STRIKE_WINDOW,
+} from "@/lib/zerodha/option-historical-config";
 import type {
   BacktestResult,
   BacktestTrade,
@@ -286,7 +291,7 @@ export function DashboardShell({
           <MultiDayBacktestPanel result={initialMultiDayBacktestResult} />
         </section>
 
-        <section className="grid gap-4 xl:grid-cols-4">
+        <section className="grid gap-4 xl:grid-cols-5">
           <RiskDashboard
             dailyLossLimit={dailyLossLimit}
             positionSize={positionSize}
@@ -294,6 +299,7 @@ export function DashboardShell({
           />
           <Phase2Pipeline snapshot={snapshot} />
           <LiveConnectionPanel />
+          <HistoricalOptionIngestionPanel />
           <SystemHealth snapshot={snapshot} />
         </section>
 
@@ -1307,6 +1313,44 @@ function RiskDashboard({
           {positionSize.reason ? (
             <p className="mt-3 text-sm font-medium text-muted-foreground">{positionSize.reason}</p>
           ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HistoricalOptionIngestionPanel() {
+  const defaultStrikes = DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW * 2 + 1;
+  const maximumContracts = (MAX_HISTORICAL_OPTION_STRIKE_WINDOW * 2 + 1) * 2;
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <CandlestickChart className="h-5 w-5 text-primary" />
+              Option History
+            </CardTitle>
+            <CardDescription>Kite F&O candles for replay</CardDescription>
+          </div>
+          <Badge variant="success">Phase 10</Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3">
+        <div className="grid grid-cols-2 gap-2 text-sm">
+          <Metric label="Default band" value={`${defaultStrikes} strikes`} />
+          <Metric label="Max contracts" value={String(maximumContracts)} />
+          <Metric label="Spread" value={`${DEFAULT_HISTORICAL_OPTION_SPREAD_PERCENT}%`} />
+          <Metric label="Orders" value="Off" />
+        </div>
+
+        <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
+          <History className="mt-0.5 h-5 w-5 text-accent" />
+          <div>
+            <p className="font-semibold">Real option candles ready</p>
+            <p className="text-muted-foreground">Bid/ask remains an explicit replay assumption.</p>
+          </div>
         </div>
       </CardContent>
     </Card>
