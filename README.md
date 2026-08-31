@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 12 Status
+## Phase 13 Status
 
-Implemented through Phase 12:
+Implemented through Phase 13:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -77,11 +77,14 @@ Implemented through Phase 12:
 - Read-only backtest report summaries with run-type, underlying, and result filters
 - Dashboard backtest reports panel with best/worst run comparison and database fallback
 - Simulation API endpoint at `/api/simulation/phase12`
+- CSV export API endpoint at `/api/backtests/export`
+- Dashboard CSV export for filtered backtest report rows
+- Simulation API endpoint at `/api/simulation/phase13`
 - Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, persistence mapping, backtest replay behavior, backtest reporting, Kite historical normalization, and Kite option-history replay rows
 
 Not implemented yet:
 
-- Production-scale report exports and sharing
+- Shareable report links and scheduled reviews
 - Authentication and real multi-user account boundaries
 - AI explanation layer
 - Live order placement
@@ -100,7 +103,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-12 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, real option historical candle ingestion for backtests, optional PostgreSQL persistence for journal entries and replay runs, and read-only backtest reports. Production exports, sharing, and authentication come later.
+Phases 1-13 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, real option historical candle ingestion for backtests, optional PostgreSQL persistence for journal entries and replay runs, read-only backtest reports, and CSV report export. Sharing and authentication come later.
 
 ## Technology
 
@@ -387,6 +390,19 @@ The Phase 12 endpoint marker is read-only:
 curl http://localhost:3000/api/simulation/phase12
 ```
 
+Phase 13 adds report export:
+
+- `/api/backtests/export` returns filtered CSV using the same report filters.
+- The dashboard export button downloads the current visible report rows.
+- Exported rows include report metrics and `liveOrdersEnabled=false`.
+- Live orders remain disabled.
+
+The Phase 13 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase13
+```
+
 ## Database
 
 The Prisma schema includes:
@@ -458,6 +474,7 @@ Tests cover:
 - Phase 10 Kite option historical ingestion, row alignment, spread assumptions, and strike-window caps
 - Phase 11 persistence mapping for paper journal entries and backtest records
 - Phase 12 backtest report records, filters, and summary totals
+- Phase 13 report query parsing and CSV export
 
 ## Market Hours
 

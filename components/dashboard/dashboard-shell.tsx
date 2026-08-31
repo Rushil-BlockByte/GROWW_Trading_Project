@@ -12,6 +12,7 @@ import {
   CandlestickChart,
   CircleDollarSign,
   Database,
+  Download,
   Filter,
   Gauge,
   History,
@@ -33,11 +34,16 @@ import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  backtestReportCsvFilename,
+  backtestReportRecordsToCsv,
+} from "@/lib/backtesting/backtest-report-export";
+import {
   backtestReportRecordFromResult,
   filterBacktestReportRecords,
   isBacktestReportRecord,
   summarizeBacktestReportRecords,
 } from "@/lib/backtesting/backtest-reporting";
+import { backtestReportQueryString } from "@/lib/backtesting/backtest-report-query";
 import { getMarketDataModeLabel } from "@/lib/config/market";
 import {
   calculatePaperJournalSummary,
@@ -382,6 +388,20 @@ function pnlVariant(value: string) {
   return "muted" as const;
 }
 
+function downloadBacktestReportsCsv(records: BacktestReportRecord[]) {
+  const csv = backtestReportRecordsToCsv(records);
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = backtestReportCsvFilename();
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 export function DashboardShell({
   initialBacktestResult,
   initialMultiDayBacktestResult,
@@ -606,7 +626,8 @@ function BacktestReportsPanel({
     setLoading(true);
 
     try {
-      const response = await fetch("/api/backtests?limit=20", { cache: "no-store" });
+      const queryString = backtestReportQueryString({ filters, limit: 20 });
+      const response = await fetch(`/api/backtests?${queryString}`, { cache: "no-store" });
       const data = (await response.json()) as BacktestApiResponse;
 
       if (!response.ok || data.ok === false) {
@@ -655,7 +676,7 @@ function BacktestReportsPanel({
     } finally {
       setLoading(false);
     }
-  }, [fallbackRecords]);
+  }, [fallbackRecords, filters]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => {
@@ -697,6 +718,16 @@ function BacktestReportsPanel({
           <div className="flex flex-wrap justify-end gap-2">
             <Badge variant={persistence.variant}>{persistence.label}</Badge>
             <Badge variant="success">No live orders</Badge>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={!filteredRecords.length}
+              onClick={() => downloadBacktestReportsCsv(filteredRecords)}
+            >
+              <Download className="h-4 w-4" />
+              Export CSV
+            </Button>
             <Button
               type="button"
               size="sm"

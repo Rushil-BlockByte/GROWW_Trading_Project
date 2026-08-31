@@ -6,6 +6,15 @@ import {
   summarizeBacktestReportRecords,
 } from "../lib/backtesting/backtest-reporting";
 import {
+  backtestReportCsvFilename,
+  backtestReportRecordsToCsv,
+} from "../lib/backtesting/backtest-report-export";
+import {
+  backtestReportQueryString,
+  parseBacktestReportFilters,
+  parseBacktestReportLimit,
+} from "../lib/backtesting/backtest-report-query";
+import {
   runSampleMultiDayVwapBreakoutBacktest,
   runSampleVwapBreakoutBacktest,
 } from "../lib/backtesting/vwap-breakout-backtest";
@@ -66,5 +75,61 @@ describe("backtest reporting", () => {
     expect(isBacktestReportRecord(record)).toBe(true);
     expect(isBacktestReportRecord({ ...record, liveOrdersEnabled: true })).toBe(false);
     expect(isBacktestReportRecord({ ...record, netPnl: 742.4 })).toBe(false);
+  });
+
+  it("exports report records as safe CSV rows", () => {
+    const record = {
+      ...backtestReportRecordFromResult(runSampleVwapBreakoutBacktest(), SAVED_AT),
+      name: 'NIFTY "comma, test"',
+      underlying: "NIFTY, INDEX",
+    };
+    const csv = backtestReportRecordsToCsv([record]);
+    const [header, row] = csv.split("\r\n");
+
+    expect(header).toBe(
+      "Run ID,Name,Status,Type,Underlying,Data Source,Started At,Ended At,Trades,Net P&L,Win Rate %,Max Drawdown,Saved At,Live Orders Enabled",
+    );
+    expect(row).toContain('"NIFTY ""comma, test"""');
+    expect(row).toContain('"NIFTY, INDEX"');
+    expect(row?.endsWith(",false")).toBe(true);
+  });
+
+  it("builds predictable report export filenames", () => {
+    expect(backtestReportCsvFilename(new Date("2026-09-01T04:30:00.000Z"))).toBe(
+      "groww-backtest-report-2026-09-01.csv",
+    );
+  });
+
+  it("parses and serializes report query filters", () => {
+    const params = new URLSearchParams(
+      "underlying=NIFTY&kind=multi_day&result=profitable&limit=25",
+    );
+    const invalidParams = new URLSearchParams(
+      "underlying=SENSEX&kind=intraday&result=great&limit=-1",
+    );
+
+    expect(parseBacktestReportFilters(params)).toEqual({
+      underlying: "NIFTY",
+      kind: "multi_day",
+      result: "profitable",
+    });
+    expect(parseBacktestReportLimit(params.get("limit"))).toBe(25);
+    expect(parseBacktestReportFilters(invalidParams)).toEqual({
+      underlying: undefined,
+      kind: undefined,
+      result: undefined,
+    });
+    expect(parseBacktestReportLimit(invalidParams.get("limit"))).toBeUndefined();
+    expect(
+      backtestReportQueryString({
+        filters: { underlying: "NIFTY", kind: "multi_day", result: "profitable" },
+        limit: 25,
+      }),
+    ).toBe("underlying=NIFTY&kind=multi_day&result=profitable&limit=25");
+    expect(
+      backtestReportQueryString({
+        filters: { underlying: "ALL", kind: "all", result: "all" },
+      }),
+    ).toBe("");
   });
 });
