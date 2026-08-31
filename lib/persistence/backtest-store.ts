@@ -10,8 +10,18 @@ import {
   getOrCreateLocalTrader,
   isDatabasePersistenceConfigured,
 } from "@/lib/persistence/local-user";
-import type { BacktestResult, BacktestTrade, MultiDayBacktestResult } from "@/types/backtest";
 import type {
+  BacktestEquityPoint,
+  BacktestResult,
+  BacktestSummary,
+  BacktestTrade,
+  MultiDayBacktestResult,
+} from "@/types/backtest";
+import type {
+  BacktestReportAssumptions,
+  BacktestReportDetail,
+  BacktestReportDetailSession,
+  BacktestReportDetailTrade,
   BacktestReportFilters,
   BacktestReportKind,
   BacktestReportRecord,
@@ -31,7 +41,22 @@ export type BacktestPersistenceResult = {
   liveOrdersEnabled: false;
 };
 
+export type BacktestDetailPersistenceResult = {
+  persistence: BacktestPersistenceResult["persistence"];
+  report: BacktestReportDetail | null;
+  liveOrdersEnabled: false;
+};
+
 type PrismaExecutor = PrismaClient | Prisma.TransactionClient;
+type BacktestRowWithCount = Prisma.BacktestGetPayload<{
+  include: { _count: { select: { trades: true } } };
+}>;
+type BacktestDetailRow = Prisma.BacktestGetPayload<{
+  include: {
+    _count: { select: { trades: true } };
+    trades: true;
+  };
+}>;
 
 function jsonClone(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -61,6 +86,24 @@ function stringField(value: unknown) {
   return typeof value === "string" ? value : null;
 }
 
+function numberField(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function stringOrNumberField(value: unknown) {
+  return typeof value === "string" || typeof value === "number" ? String(value) : "0.00";
+}
+
+function stringArrayField(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function decimalString(value: Prisma.Decimal | null, places = 2) {
+  return value ? value.toFixed(places) : null;
+}
+
 function summaryValue(metrics: Prisma.JsonValue | null, key: string) {
   if (!isObject(metrics)) return "0.00";
 
@@ -81,6 +124,119 @@ function metadataValue(metrics: Prisma.JsonValue | null, key: string) {
   if (!isObject(metadata)) return null;
 
   return stringField(metadata[key]);
+}
+
+function backtestKindFromDatabase(
+  row: Pick<BacktestRowWithCount, "assumptions" | "metrics">,
+): BacktestReportKind {
+  const assumptions = isObject(row.assumptions) ? row.assumptions : {};
+  const assumptionKind = stringField(assumptions.kind);
+
+  if (assumptionKind === "multi_day" || assumptionKind === "single_day") {
+    return assumptionKind;
+  }
+
+  const metadata = isObject(row.metrics) && isObject(row.metrics.metadata) ? row.metrics.metadata : {};
+
+  return metadata.sessionCount ? "multi_day" : "single_day";
+}
+
+function summaryObject(metrics: Prisma.JsonValue | null): BacktestSummary {
+  const summary = isObject(metrics) && isObject(metrics.summary) ? metrics.summary : {};
+
+  return {
+    evaluatedSignals: numberField(summary.evaluatedSignals),
+    confirmedSignals: numberField(summary.confirmedSignals),
+    skippedSignals: numberField(summary.skippedSignals),
+    trades: numberField(summary.trades),
+    wins: numberField(summary.wins),
+    losses: numberField(summary.losses),
+    flats: numberField(summary.flats),
+    winRate: stringOrNumberField(summary.winRate),
+    grossPnl: stringOrNumberField(summary.grossPnl),
+    costs: stringOrNumberField(summary.costs),
+    netPnl: stringOrNumberField(summary.netPnl),
+    averageWin: stringOrNumberField(summary.averageWin),
+    averageLoss: stringOrNumberField(summary.averageLoss),
+    largestWin: stringOrNumberField(summary.largestWin),
+    largestLoss: stringOrNumberField(summary.largestLoss),
+    expectancy: stringOrNumberField(summary.expectancy),
+    profitFactor:
+      typeof summary.profitFactor === "string" || typeof summary.profitFactor === "number"
+        ? String(summary.profitFactor)
+        : null,
+    maxDrawdown: stringOrNumberField(summary.maxDrawdown),
+    liveOrdersEnabled: false,
+  };
+}
+
+function equityCurveFromMetrics(metrics: Prisma.JsonValue | null): BacktestEquityPoint[] {
+  const equityCurve = isObject(metrics) ? metrics.equityCurve : null;
+
+  if (!Array.isArray(equityCurve)) return [];
+
+  return equityCurve.flatMap((point) => {
+    if (!isObject(point)) return [];
+
+    const timestamp = stringField(point.timestamp);
+    const tradeId = stringField(point.tradeId);
+    const equity = stringField(point.equity);
+    const drawdown = stringField(point.drawdown);
+
+    if (!timestamp || !tradeId || !equity || !drawdown) return [];
+
+    return [{ timestamp, tradeId, equity, drawdown }];
+  });
+}
+
+function sessionsFromMetrics(metrics: Prisma.JsonValue | null): BacktestReportDetailSession[] {
+  const sessions = isObject(metrics) ? metrics.sessions : null;
+
+  if (!Array.isArray(sessions)) return [];
+
+  return sessions.flatMap((session) => {
+    if (!isObject(session)) return [];
+
+    const summary = isObject(session.summary) ? session.summary : {};
+    const id = stringField(session.id);
+    const date = stringField(session.date);
+    const label = stringField(session.label);
+
+    if (!id || !date || !label) return [];
+
+    return [
+      {
+        id,
+        date,
+        label,
+        trades: numberField(summary.trades),
+        netPnl: stringOrNumberField(summary.netPnl),
+        winRate: stringOrNumberField(summary.winRate),
+        maxDrawdown: stringOrNumberField(summary.maxDrawdown),
+        warnings: stringArrayField(session.warnings),
+        liveOrdersEnabled: false,
+      },
+    ];
+  });
+}
+
+function assumptionsObject(
+  row: Pick<BacktestDetailRow, "assumptions" | "metrics">,
+): BacktestReportAssumptions {
+  const assumptions = isObject(row.assumptions) ? row.assumptions : {};
+  const metadata = isObject(row.metrics) && isObject(row.metrics.metadata) ? row.metrics.metadata : {};
+  const kindValue = stringField(assumptions.kind);
+  const kind: BacktestReportKind = kindValue === "multi_day" ? "multi_day" : "single_day";
+
+  return {
+    kind,
+    dataSource:
+      stringField(assumptions.dataSource) ?? stringField(metadata.dataSource) ?? "USER_SUPPLIED",
+    slippagePercent: stringField(assumptions.slippagePercent),
+    brokeragePerOrder: stringField(assumptions.brokeragePerOrder),
+    warnings: stringArrayField(assumptions.warnings),
+    liveOrdersEnabled: false,
+  };
 }
 
 function kindForResult(result: PersistableBacktestResult): BacktestReportKind {
@@ -256,14 +412,12 @@ export function isMultiDayBacktestResult(value: unknown): value is MultiDayBackt
   );
 }
 
-export function backtestRecordFromDatabase(
-  row: Prisma.BacktestGetPayload<{ include: { _count: { select: { trades: true } } } }>,
-): BacktestPersistenceRecord {
+export function backtestRecordFromDatabase(row: BacktestRowWithCount): BacktestPersistenceRecord {
   return {
     id: row.id,
     name: row.name,
     status: row.status,
-    kind: metadataValue(row.metrics, "sessionCount") ? "multi_day" : "single_day",
+    kind: backtestKindFromDatabase(row),
     underlying: metadataValue(row.metrics, "underlying") ?? "NIFTY",
     dataSource: metadataValue(row.metrics, "dataSource") ?? "USER_SUPPLIED",
     startedAt: row.trainingStart?.toISOString() ?? null,
@@ -273,6 +427,40 @@ export function backtestRecordFromDatabase(
     winRate: summaryValue(row.metrics, "winRate"),
     maxDrawdown: summaryValue(row.metrics, "maxDrawdown"),
     savedAt: row.updatedAt.toISOString(),
+    liveOrdersEnabled: false,
+  };
+}
+
+export function backtestReportDetailFromDatabase(row: BacktestDetailRow): BacktestReportDetail {
+  return {
+    record: backtestRecordFromDatabase(row),
+    summary: summaryObject(row.metrics),
+    assumptions: assumptionsObject(row),
+    sessions: sessionsFromMetrics(row.metrics),
+    trades: row.trades.map((trade): BacktestReportDetailTrade => ({
+      id: trade.id,
+      signalTime: trade.signalTimestamp.toISOString(),
+      entryTime: trade.entryTimestamp.toISOString(),
+      exitTime: trade.exitTimestamp?.toISOString() ?? null,
+      underlying: trade.underlying,
+      optionSymbol: trade.optionSymbol,
+      side: trade.side,
+      strike: trade.strike.toFixed(2),
+      expiry: trade.expiry.toISOString(),
+      quantity: trade.quantity,
+      entryPrice: trade.entryPrice.toFixed(2),
+      exitPrice: decimalString(trade.exitPrice),
+      stopPrice: trade.stopPrice.toFixed(2),
+      targetOne: decimalString(trade.targetOne),
+      targetTwo: decimalString(trade.targetTwo),
+      transactionCost: decimalString(trade.transactionCost),
+      realizedPnl: decimalString(trade.realizedPnl),
+      rMultiple: decimalString(trade.rMultiple, 4),
+      score: trade.score,
+      outcome: trade.outcome,
+      liveOrdersEnabled: false,
+    })),
+    equityCurve: equityCurveFromMetrics(row.metrics),
     liveOrdersEnabled: false,
   };
 }
@@ -319,6 +507,58 @@ export async function listPersistedBacktests({
     backtest: backtests[0] ?? null,
     backtests,
     savedCount: backtests.length,
+    liveOrdersEnabled: false,
+  };
+}
+
+export async function getPersistedBacktestDetail({
+  client = prisma,
+  id,
+}: {
+  client?: PrismaExecutor;
+  id: string;
+}): Promise<BacktestDetailPersistenceResult> {
+  if (!isDatabasePersistenceConfigured()) {
+    return {
+      persistence: {
+        configured: false,
+        status: "local_only",
+        message: "Database is not configured. Saved report links are unavailable.",
+      },
+      report: null,
+      liveOrdersEnabled: false,
+    };
+  }
+
+  const user = await getOrCreateLocalTrader(client);
+  const row = await client.backtest.findFirst({
+    where: {
+      id,
+      userId: user.id,
+    },
+    include: {
+      _count: {
+        select: {
+          trades: true,
+        },
+      },
+      trades: {
+        orderBy: {
+          entryTimestamp: "asc",
+        },
+      },
+    },
+  });
+
+  return {
+    persistence: {
+      configured: true,
+      status: "database",
+      message: row
+        ? "Backtest report loaded from PostgreSQL."
+        : "No saved backtest report was found for this link.",
+    },
+    report: row ? backtestReportDetailFromDatabase(row) : null,
     liveOrdersEnabled: false,
   };
 }

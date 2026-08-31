@@ -9,15 +9,18 @@ import {
   backtestReportCsvFilename,
   backtestReportRecordsToCsv,
 } from "../lib/backtesting/backtest-report-export";
+import { backtestReportDetailFromResult } from "../lib/backtesting/backtest-report-detail";
 import {
   backtestReportQueryString,
   parseBacktestReportFilters,
   parseBacktestReportLimit,
 } from "../lib/backtesting/backtest-report-query";
+import { backtestReportSharePath } from "../lib/backtesting/backtest-report-share";
 import {
   runSampleMultiDayVwapBreakoutBacktest,
   runSampleVwapBreakoutBacktest,
 } from "../lib/backtesting/vwap-breakout-backtest";
+import { backtestRecordFromDatabase } from "../lib/persistence/backtest-store";
 
 const SAVED_AT = new Date("2026-09-01T04:30:00.000Z");
 
@@ -131,5 +134,58 @@ describe("backtest reporting", () => {
         filters: { underlying: "ALL", kind: "all", result: "all" },
       }),
     ).toBe("");
+  });
+
+  it("builds read-only detail records for shared report pages", () => {
+    const result = runSampleMultiDayVwapBreakoutBacktest();
+    const detail = backtestReportDetailFromResult(result, SAVED_AT);
+
+    expect(detail.record.id).toBe(result.metadata.id);
+    expect(detail.record.kind).toBe("multi_day");
+    expect(detail.record.savedAt).toBe(SAVED_AT.toISOString());
+    expect(detail.summary.liveOrdersEnabled).toBe(false);
+    expect(detail.assumptions.liveOrdersEnabled).toBe(false);
+    expect(detail.liveOrdersEnabled).toBe(false);
+    expect(detail.sessions.length).toBe(result.sessions.length);
+    expect(detail.trades).toHaveLength(result.trades.length);
+    expect(detail.trades.every((trade) => trade.liveOrdersEnabled === false)).toBe(true);
+  });
+
+  it("creates encoded share paths for saved report links", () => {
+    expect(backtestReportSharePath("SIM-REPORT 1/CE")).toBe("/backtests/SIM-REPORT%201%2FCE");
+  });
+
+  it("preserves multi-day kind when reading saved database reports", () => {
+    const record = backtestRecordFromDatabase({
+      id: "SIM-MULTI",
+      name: "Saved multi-day report",
+      status: "COMPLETED",
+      trainingStart: new Date("2026-09-01T03:45:00.000Z"),
+      trainingEnd: new Date("2026-09-03T05:20:00.000Z"),
+      updatedAt: SAVED_AT,
+      assumptions: {
+        kind: "multi_day",
+        dataSource: "SIMULATED_HISTORICAL_REPLAY",
+        liveOrdersEnabled: false,
+      },
+      metrics: {
+        metadata: {
+          sessionCount: 3,
+          underlying: "NIFTY",
+          dataSource: "SIMULATED_HISTORICAL_REPLAY",
+        },
+        summary: {
+          netPnl: "1484.80",
+          winRate: "100.00",
+          maxDrawdown: "0.00",
+        },
+      },
+      _count: {
+        trades: 2,
+      },
+    } as unknown as Parameters<typeof backtestRecordFromDatabase>[0]);
+
+    expect(record.kind).toBe("multi_day");
+    expect(record.liveOrdersEnabled).toBe(false);
   });
 });

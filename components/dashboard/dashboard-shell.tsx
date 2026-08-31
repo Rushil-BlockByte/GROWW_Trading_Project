@@ -11,8 +11,10 @@ import {
   CalendarDays,
   CandlestickChart,
   CircleDollarSign,
+  Copy,
   Database,
   Download,
+  ExternalLink,
   Filter,
   Gauge,
   History,
@@ -44,6 +46,7 @@ import {
   summarizeBacktestReportRecords,
 } from "@/lib/backtesting/backtest-reporting";
 import { backtestReportQueryString } from "@/lib/backtesting/backtest-report-query";
+import { backtestReportSharePath } from "@/lib/backtesting/backtest-report-share";
 import { getMarketDataModeLabel } from "@/lib/config/market";
 import {
   calculatePaperJournalSummary,
@@ -402,6 +405,46 @@ function downloadBacktestReportsCsv(records: BacktestReportRecord[]) {
   window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function backtestReportShareUrl(record: BacktestReportRecord) {
+  const path = backtestReportSharePath(record.id);
+
+  if (typeof window === "undefined") return path;
+
+  return new URL(path, window.location.origin).toString();
+}
+
+function fallbackCopyText(value: string) {
+  const textarea = document.createElement("textarea");
+
+  textarea.value = value;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.append(textarea);
+  textarea.select();
+
+  const copied = document.execCommand("copy");
+
+  textarea.remove();
+
+  return copied;
+}
+
+async function copyBacktestReportLink(record: BacktestReportRecord) {
+  const url = backtestReportShareUrl(record);
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      return true;
+    }
+
+    return fallbackCopyText(url);
+  } catch {
+    return fallbackCopyText(url);
+  }
+}
+
 export function DashboardShell({
   initialBacktestResult,
   initialMultiDayBacktestResult,
@@ -616,6 +659,8 @@ function BacktestReportsPanel({
     result: "all",
   });
   const [loading, setLoading] = useState(false);
+  const [reportLinksEnabled, setReportLinksEnabled] = useState(false);
+  const [copiedReportId, setCopiedReportId] = useState<string | null>(null);
   const [persistence, setPersistence] = useState<PersistenceUiState>({
     label: "Local sample",
     message: "Showing current replay samples until saved database runs are available.",
@@ -626,7 +671,7 @@ function BacktestReportsPanel({
     setLoading(true);
 
     try {
-      const queryString = backtestReportQueryString({ filters, limit: 20 });
+      const queryString = backtestReportQueryString({ limit: 20 });
       const response = await fetch(`/api/backtests?${queryString}`, { cache: "no-store" });
       const data = (await response.json()) as BacktestApiResponse;
 
@@ -638,11 +683,13 @@ function BacktestReportsPanel({
 
       if (data.persistence?.status === "database" && apiRecords.length) {
         setRecords(apiRecords);
+        setReportLinksEnabled(true);
         setPersistence(persistenceUiState(data.persistence));
         return;
       }
 
       setRecords(fallbackRecords);
+      setReportLinksEnabled(false);
 
       if (data.persistence?.status === "error") {
         setPersistence({
@@ -665,6 +712,7 @@ function BacktestReportsPanel({
       setPersistence(persistenceUiState(data.persistence));
     } catch (error) {
       setRecords(fallbackRecords);
+      setReportLinksEnabled(false);
       setPersistence({
         label: "Local sample",
         message:
@@ -676,7 +724,7 @@ function BacktestReportsPanel({
     } finally {
       setLoading(false);
     }
-  }, [fallbackRecords, filters]);
+  }, [fallbackRecords]);
 
   useEffect(() => {
     const initialLoad = window.setTimeout(() => {
@@ -701,6 +749,16 @@ function BacktestReportsPanel({
     () => summarizeBacktestReportRecords(filteredRecords),
     [filteredRecords],
   );
+  const copyReportLink = useCallback(async (record: BacktestReportRecord) => {
+    const copied = await copyBacktestReportLink(record);
+
+    if (!copied) return;
+
+    setCopiedReportId(record.id);
+    window.setTimeout(() => {
+      setCopiedReportId((current) => (current === record.id ? null : current));
+    }, 1500);
+  }, []);
 
   return (
     <Card>
@@ -824,17 +882,24 @@ function BacktestReportsPanel({
                 <TableHead className="text-right">Win</TableHead>
                 <TableHead className="text-right">Drawdown</TableHead>
                 <TableHead>Saved</TableHead>
+                <TableHead className="text-right">Link</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {filteredRecords.length ? (
                 filteredRecords.map((record) => (
-                  <BacktestReportRow key={record.id} record={record} />
+                  <BacktestReportRow
+                    key={record.id}
+                    copied={copiedReportId === record.id}
+                    record={record}
+                    shareable={reportLinksEnabled}
+                    onCopy={copyReportLink}
+                  />
                 ))
               ) : (
                 <TableRow>
                   <TableCell
-                    colSpan={6}
+                    colSpan={7}
                     className="h-20 text-center text-sm text-muted-foreground"
                   >
                     No reports match these filters.
@@ -882,7 +947,19 @@ function BacktestReportHighlight({
   );
 }
 
-function BacktestReportRow({ record }: { record: BacktestReportRecord }) {
+function BacktestReportRow({
+  copied,
+  onCopy,
+  record,
+  shareable,
+}: {
+  copied: boolean;
+  onCopy: (record: BacktestReportRecord) => void;
+  record: BacktestReportRecord;
+  shareable: boolean;
+}) {
+  const sharePath = backtestReportSharePath(record.id);
+
   return (
     <TableRow>
       <TableCell className="min-w-56">
@@ -911,6 +988,34 @@ function BacktestReportRow({ record }: { record: BacktestReportRecord }) {
       </TableCell>
       <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
         {formatReportDateTime(record.savedAt)}
+      </TableCell>
+      <TableCell className="whitespace-nowrap text-right">
+        {shareable ? (
+          <div className="flex justify-end gap-1">
+            <Button
+              type="button"
+              size="icon"
+              variant="ghost"
+              className="h-8 w-8"
+              aria-label={`Copy ${record.name} report link`}
+              title={copied ? "Copied" : "Copy link"}
+              onClick={() => onCopy(record)}
+            >
+              <Copy className="h-4 w-4" />
+            </Button>
+            <Button asChild size="icon" variant="ghost" className="h-8 w-8">
+              <Link
+                href={sharePath}
+                aria-label={`Open ${record.name} report`}
+                title="Open report"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <Badge variant="muted">Sample</Badge>
+        )}
       </TableCell>
     </TableRow>
   );
