@@ -1,12 +1,14 @@
 import type {
   DataQualityStatus,
   MarketRegime,
+  SignalLifecycleState,
   SignalQuality,
   UnderlyingSymbol,
 } from "@/types/market";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorContext } from "@/types/indicators";
 import type { OptionChainContext } from "@/types/options";
+import type { StrategyEvaluation } from "@/types/strategy";
 
 export type SimulatedUnderlying = {
   symbol: UnderlyingSymbol;
@@ -59,7 +61,7 @@ export type SimulatedSignal = {
   riskReward?: string;
   reasons: string[];
   risks: string[];
-  state: "FORMING" | "CONFIRMED" | "ACTIVE" | "INVALIDATED";
+  state: SignalLifecycleState;
 };
 
 export type SimulatedSystemHealth = {
@@ -82,6 +84,7 @@ export type SimulatedMarketSnapshot = {
   phase2: SimulatedPhase2Pipeline;
   phase4: IndicatorContext;
   phase5: OptionChainContext;
+  phase6: StrategyEvaluation;
 };
 
 export type SimulatedPhase2Pipeline = {

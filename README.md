@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 5 Status
+## Phase 6 Status
 
-Implemented through Phase 5:
+Implemented through Phase 6:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -44,11 +44,16 @@ Implemented through Phase 5:
 - Contract-level liquidity gating using volume, OI, spread, premium, and volume/OI ratio
 - Simulation API endpoint at `/api/simulation/phase5`
 - Dashboard option-chain context panel and CE/PE tradable status labels
+- Deterministic VWAP breakout strategy evaluator
+- 100-point setup score using trend, VWAP, breakout, volume, momentum, option-chain, liquidity, and risk/reward components
+- Signal lifecycle mapping for forming, confirmed, and invalidated setups
+- Hard gates that keep direction as `NO TRADE` until breakout, liquidity, risk/reward, data quality, and regime checks pass
+- Simulation API endpoint at `/api/simulation/phase6`
+- Dashboard score-component breakdown and watched level/option context
 - Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, and Kite provider behavior
 
 Not implemented yet:
 
-- Strategy engine
 - Paper-trade persistence
 - Historical backtesting
 - AI explanation layer
@@ -68,7 +73,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-5 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, and option-chain liquidity context. Strategy scoring and paper-trade persistence come later.
+Phases 1-6 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, and deterministic strategy scoring. Paper-trade persistence comes later.
 
 ## Technology
 
@@ -154,7 +159,7 @@ curl -X POST http://localhost:3000/api/kite/stream -H "Content-Type: application
 curl -X POST http://localhost:3000/api/kite/stream -H "Content-Type: application/json" -d "{\"action\":\"stop\"}"
 ```
 
-The dashboard also includes a Zerodha stream card. Starting the stream does not enable live orders. Strategy signals remain disabled until later phases add deterministic setup rules.
+The dashboard also includes a Zerodha stream card. Starting the stream does not enable live orders. Strategy evaluation is deterministic and read-only.
 
 ## Indicator Context
 
@@ -197,6 +202,25 @@ curl http://localhost:3000/api/simulation/phase5
 ```
 
 Liquidity status does not mean take a trade. It only says whether a contract passes basic market-quality checks.
+
+## Strategy Evaluation
+
+Phase 6 adds the first deterministic scanner:
+
+- Strategy: `VWAP + Trend + Breakout + Volume`
+- Version: `1.0.0`
+- Score range: `0-100`
+- Quality bands: `NO SETUP`, `WEAK`, `WATCH`, `STRONG`, `HIGH QUALITY`
+- Direction stays `NO TRADE` unless every hard gate passes
+- Live orders remain disabled
+
+The Phase 6 endpoint is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase6
+```
+
+The score is not a probability of profit. It is an explainable checklist score for the configured setup.
 
 ## Database
 
@@ -261,6 +285,7 @@ Tests cover:
 - Kite tick normalization and read-only provider behavior
 - Phase 4 indicator calculations and simulation context
 - Phase 5 option-chain context and liquidity gating
+- Phase 6 deterministic strategy scoring and no-trade gates
 
 ## Market Hours
 

@@ -2,6 +2,7 @@ import { DEFAULT_UNDERLYINGS } from "@/lib/config/market";
 import { buildOptionChainContext } from "@/lib/options/chain-context";
 import { createPhase2PipelineSnapshot } from "@/lib/simulation/phase2-pipeline";
 import { createPhase4IndicatorContext } from "@/lib/simulation/phase4-context";
+import { evaluateVwapBreakoutStrategy } from "@/lib/strategy/vwap-breakout";
 import type {
   SimulatedMarketSnapshot,
   SimulatedOptionRow,
@@ -119,25 +120,38 @@ export function createSimulatedMarketSnapshot(step: number): SimulatedMarketSnap
     expiry: phase2.selectedExpiry,
     rows: optionChain,
   });
+  const phase6 = evaluateVwapBreakoutStrategy({
+    indicator: phase4,
+    optionContext: phase5,
+    marketRegime: underlyings[0].regime,
+    dataQuality: phase2.dataQuality,
+  });
 
   return {
     generatedAt: new Date().toISOString(),
     underlyings,
     optionChain,
     signal: {
-      id: "SIM-NO-TRADE-001",
-      underlying: "NIFTY",
-      direction: "NO TRADE",
-      setupName: "VWAP + Trend + Breakout + Volume",
-      score: 42,
-      quality: "NO SETUP",
-      reasons: [
-        "Breakout candle is not confirmed",
-        "Validated strategy signal is not active",
-        "Paper trade requires a confirmed setup",
-      ],
-      risks: ["Simulation data", "No live Zerodha stream connected"],
-      state: "FORMING",
+      id: phase6.id,
+      underlying: phase6.underlying,
+      direction: phase6.direction,
+      setupName: phase6.name,
+      score: phase6.score,
+      quality: phase6.quality,
+      suggestedOption:
+        phase6.state === "CONFIRMED" ? phase6.selectedContract?.label : undefined,
+      entryRange: phase6.entryPlan
+        ? `Trigger ${phase6.entryPlan.entryTrigger}`
+        : undefined,
+      underlyingInvalidation: phase6.entryPlan
+        ? Number(phase6.entryPlan.invalidation)
+        : undefined,
+      targetOne: phase6.entryPlan ? Number(phase6.entryPlan.targetOne) : undefined,
+      targetTwo: phase6.entryPlan ? Number(phase6.entryPlan.targetTwo) : undefined,
+      riskReward: phase6.entryPlan ? phase6.entryPlan.riskReward : undefined,
+      reasons: phase6.reasons,
+      risks: phase6.risks,
+      state: phase6.state,
     },
     health: {
       websocket: "NOT_CONNECTED",
@@ -145,12 +159,13 @@ export function createSimulatedMarketSnapshot(step: number): SimulatedMarketSnap
       subscriptions: phase2.subscriptionCount,
       rejectedSubscriptions: phase2.rejectedSubscriptions,
       dataQuality: phase2.dataQuality,
-      signalEngine: "PARKED",
+      signalEngine: "RUNNING",
       database: process.env.DATABASE_URL ? "CONFIGURED" : "NOT_CONFIGURED",
       mode: "simulation",
     },
     phase2,
     phase4,
     phase5,
+    phase6,
   };
 }

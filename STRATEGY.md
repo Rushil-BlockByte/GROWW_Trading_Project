@@ -10,10 +10,10 @@ Strategy name:
 VWAP_BREAKOUT
 ```
 
-Initial version:
+Implemented version:
 
 ```text
-v1.0
+1.0.0
 ```
 
 ## Plain-English Meaning
@@ -24,7 +24,7 @@ If the setup is incomplete, the result is `NO TRADE`.
 
 ## Technical Inputs
 
-Phase 4 implements the price/volume context inputs. Phase 5 implements option-chain and liquidity context. They are displayed for inspection and are not yet converted into entry or exit signals.
+Phase 4 implements the price/volume context inputs. Phase 5 implements option-chain and liquidity context. Phase 6 converts those inputs into deterministic setup scoring.
 
 - Current price
 - Session VWAP
@@ -143,6 +143,8 @@ Reason: Poor option liquidity.
 
 Phase 5 applies liquidity checks at the contract level. The status is either `TRADABLE` or `NOT_TRADABLE`, but this is only a market-quality gate. It is not a strategy signal.
 
+Phase 6 selects the nearest liquid contract on the setup side as watched context only. For a bullish bias, the watched side is CE. For a bearish bias, the watched side is PE.
+
 ## Scoring
 
 The setup score is transparent and deterministic:
@@ -161,6 +163,8 @@ The setup score is transparent and deterministic:
 This is called `SETUP SCORE`.
 
 It is not a probability of profit.
+
+Phase 6 implements this score in `VWAP + Trend + Breakout + Volume` version `1.0.0`.
 
 ## Quality Bands
 
@@ -188,6 +192,16 @@ Return `NO TRADE` or `NO SIGNAL` when:
 - Market is closed
 - Expiry risk is high
 - Contract is unavailable
+
+Phase 6 keeps direction as `NO TRADE` unless all hard gates pass:
+
+- Data quality is `GOOD`
+- Market regime is not `SIDEWAYS` or `HIGH_VOLATILITY`
+- A directional bias exists
+- Breakout/breakdown is confirmed by close
+- Option-chain confirmation does not conflict
+- A liquid option contract exists on the setup side
+- Risk/reward meets the configured minimum
 
 ## Signal Lifecycle
 

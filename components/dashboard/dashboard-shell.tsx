@@ -40,6 +40,7 @@ import type {
 } from "@/types/options";
 import type { LiveKiteStreamSnapshot } from "@/lib/zerodha/live-stream-service";
 import type { SimulatedMarketSnapshot, SimulatedUnderlying } from "@/types/simulation";
+import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/strategy";
 
 type DashboardShellProps = {
   initialSnapshot: SimulatedMarketSnapshot;
@@ -105,6 +106,25 @@ function liquidityVariant(status: OptionLiquidityStatus) {
 
 function formatLiquidityStatus(status: OptionLiquidityStatus) {
   return status === "TRADABLE" ? "Tradable" : "Not tradable";
+}
+
+function qualityVariant(quality: SimulatedMarketSnapshot["signal"]["quality"]) {
+  if (quality === "HIGH QUALITY" || quality === "STRONG") return "success" as const;
+  if (quality === "WATCH" || quality === "WEAK") return "warning" as const;
+  return "muted" as const;
+}
+
+function strategyStateVariant(state: SimulatedMarketSnapshot["signal"]["state"]) {
+  if (state === "CONFIRMED" || state === "ACTIVE") return "success" as const;
+  if (state === "FORMING") return "warning" as const;
+  if (state === "INVALIDATED" || state === "STOPPED") return "destructive" as const;
+  return "muted" as const;
+}
+
+function componentStatusVariant(status: StrategyComponentStatus) {
+  if (status === "PASS") return "success" as const;
+  if (status === "PARTIAL" || status === "PENDING") return "warning" as const;
+  return "destructive" as const;
 }
 
 export function DashboardShell({ initialSnapshot }: DashboardShellProps) {
@@ -699,6 +719,12 @@ function Metric({ label, value }: { label: string; value: string }) {
 }
 
 function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
+  const strategy = snapshot.phase6;
+  const watchedOption = strategy.selectedContract?.label ?? "None";
+  const watchedLevel = strategy.watchedLevel
+    ? `${strategy.watchedLevel.label} ${formatIndicator(strategy.watchedLevel.value)}`
+    : "None";
+
   return (
     <Card>
       <CardHeader>
@@ -710,19 +736,26 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
             </CardTitle>
             <CardDescription>{snapshot.signal.setupName}</CardDescription>
           </div>
-          <Badge variant="muted">{snapshot.signal.direction}</Badge>
+          <div className="flex flex-col items-end gap-2">
+            <Badge variant={strategyStateVariant(snapshot.signal.state)}>
+              {snapshot.signal.direction}
+            </Badge>
+            <Badge variant={qualityVariant(strategy.quality)}>{strategy.quality}</Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
         <div className="grid gap-2">
           <div className="flex items-center justify-between gap-3">
             <span className="text-sm font-medium">Setup score</span>
-            <span className="text-lg font-semibold tabular-nums">{snapshot.signal.score}/100</span>
+            <span className="text-lg font-semibold tabular-nums">{strategy.score}/100</span>
           </div>
-          <Progress value={snapshot.signal.score} />
-          <div className="flex items-center justify-between gap-3 text-sm">
-            <span className="text-muted-foreground">Quality</span>
-            <Badge variant="muted">{snapshot.signal.quality}</Badge>
+          <Progress value={strategy.score} />
+          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+            <Metric label="Bias" value={strategy.bias} />
+            <Metric label="State" value={strategy.state.replace("_", " ")} />
+            <Metric label="Confirmed" value={strategy.direction === "NO TRADE" ? "No" : "Yes"} />
+            <Metric label="Version" value={strategy.version} />
           </div>
         </div>
 
@@ -745,22 +778,64 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
           </div>
         </div>
 
+        <StrategyComponentBreakdown components={strategy.components} />
+
         <div className="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm">
           <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">Suggested option</span>
-            <span className="text-muted-foreground">None</span>
+            <span className="font-medium">Watched level</span>
+            <span className="text-right text-muted-foreground">{watchedLevel}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium">Watched option</span>
+            <span className="text-right text-muted-foreground">{watchedOption}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="font-medium">Entry</span>
-            <span className="text-muted-foreground">Waiting for confirmed setup</span>
+            <span className="text-right text-muted-foreground">
+              {strategy.entryPlan ? strategy.entryPlan.entryTrigger : "Waiting for confirmed setup"}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="font-medium">Risk/reward</span>
-            <span className="text-muted-foreground">Not valid</span>
+            <span className="text-right text-muted-foreground">
+              {strategy.entryPlan ? strategy.entryPlan.riskReward : "Not valid"}
+            </span>
           </div>
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function StrategyComponentBreakdown({ components }: { components: StrategyComponentScore[] }) {
+  return (
+    <div className="rounded-md border p-3">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="text-sm font-semibold">Score Components</p>
+        <Badge variant="outline">
+          {components.reduce((sum, item) => sum + item.points, 0)}/100
+        </Badge>
+      </div>
+      <div className="grid gap-2">
+        {components.map((item) => (
+          <div
+            key={item.key}
+            className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border bg-muted/35 px-3 py-2 text-sm"
+          >
+            <div className="min-w-0">
+              <p className="truncate font-medium">{item.label}</p>
+              <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Badge variant={componentStatusVariant(item.status)}>{item.status}</Badge>
+              <span className="w-12 text-right font-semibold tabular-nums">
+                {item.points}/{item.maxPoints}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

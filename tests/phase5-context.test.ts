@@ -23,6 +23,6 @@ describe("phase 5 option-chain simulation", () => {
     );
     expect(snapshot.signal.direction).toBe("NO TRADE");
     expect(snapshot.signal.suggestedOption).toBeUndefined();
-    expect(snapshot.health.signalEngine).toBe("PARKED");
+    expect(snapshot.health.signalEngine).toBe("RUNNING");
   });
 });
