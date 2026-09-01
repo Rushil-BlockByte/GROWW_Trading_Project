@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { getOptionalAppUser, isAuthenticationRequired } from "@/lib/auth/session";
 import { getServerConfig } from "@/lib/config/env";
 import { updateLocalEnvValue } from "@/lib/config/local-env-file";
 import { exchangeKiteRequestToken } from "@/lib/zerodha/token-exchange";
@@ -28,6 +29,12 @@ function escapeHtml(value: string) {
 }
 
 export async function GET(request: NextRequest) {
+  const user = await getOptionalAppUser();
+
+  if (!user && isAuthenticationRequired()) {
+    return html("<h1>Owner login is required before connecting Zerodha.</h1>", 401);
+  }
+
   const requestToken = request.nextUrl.searchParams.get("request_token");
   const status = request.nextUrl.searchParams.get("status");
   const config = getServerConfig();

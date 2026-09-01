@@ -1,13 +1,21 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { ArrowLeft, CalendarDays, ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
+import { getOptionalAppUser } from "@/lib/auth/session";
 import { DEFAULT_UNDERLYINGS } from "@/lib/config/market";
 
-export default function DailyPlanPage() {
+export default async function DailyPlanPage() {
+  const user = await getOptionalAppUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-4 py-5 sm:px-6 lg:px-8">

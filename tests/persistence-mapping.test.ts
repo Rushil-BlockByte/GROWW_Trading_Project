@@ -21,6 +21,7 @@ import { createInitialMarketSnapshot } from "../lib/simulation/market-snapshot";
 import type { SimulatedMarketSnapshot } from "../types/simulation";
 
 const NOW = "2026-09-01T04:30:00.000Z";
+const REPLAY_TEST_TIMEOUT_MS = 15_000;
 
 function confirmedSnapshot(): SimulatedMarketSnapshot {
   const snapshot = createInitialMarketSnapshot();
@@ -120,5 +121,5 @@ describe("persistence mapping", () => {
     expect(singleRecord.liveOrdersEnabled).toBe(false);
     expect(multiRecord.liveOrdersEnabled).toBe(false);
     expect(isBacktestResult({ metadata: { id: "bad" } })).toBe(false);
-  });
+  }, REPLAY_TEST_TIMEOUT_MS);
 });

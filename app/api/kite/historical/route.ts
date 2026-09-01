@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAppUserForApi } from "@/lib/auth/api";
 import { InstrumentRepository } from "@/lib/instruments/instrument-repository";
 import { runVwapBreakoutBacktest } from "@/lib/backtesting/vwap-breakout-backtest";
 import { getServerConfig } from "@/lib/config/env";
@@ -99,6 +100,10 @@ function optionOpenInterestParam(searchParams: URLSearchParams) {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   const config = getServerConfig();
   const { searchParams } = request.nextUrl;
   const interval = searchParams.get("interval") ?? "minute";

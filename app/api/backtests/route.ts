@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAppUserForApi } from "@/lib/auth/api";
 import {
   isBacktestResult,
   isMultiDayBacktestResult,
@@ -14,6 +15,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   try {
     const result = await listPersistedBacktests({
       filters: parseBacktestReportFilters(request.nextUrl.searchParams),
@@ -41,6 +46,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   let result: unknown = null;
 
   try {

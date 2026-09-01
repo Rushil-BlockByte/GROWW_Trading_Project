@@ -4,9 +4,9 @@ Personal Indian options analysis platform for read-only scanning and paper tradi
 
 The application is designed to favor data quality, strategy discipline, risk control, and repeatability. It should often say `NO TRADE`.
 
-## Phase 14 Status
+## Phase 18 Status
 
-Implemented through Phase 14:
+Implemented through Phase 18:
 
 - Next.js, TypeScript, Tailwind CSS, and shadcn-style UI foundation
 - Prisma schema for PostgreSQL
@@ -84,13 +84,26 @@ Implemented through Phase 14:
 - Saved report detail API endpoint at `/api/backtests/[id]`
 - Dashboard link actions for database-backed report rows
 - Simulation API endpoint at `/api/simulation/phase14`
+- Daily and weekly report review workflow at `/reviews`
+- Report review save/list API endpoint at `/api/report-reviews`
+- PostgreSQL `ReportReview` persistence with comparison snapshots
+- Simulation API endpoint at `/api/simulation/phase15`
+- Owner login route at `/login`
+- Signed owner session API endpoint at `/api/auth/session`
+- Private route and API boundaries for saved reports, reviews, paper journal, Kite historical data, token callback, and stream controls
+- Simulation API endpoint at `/api/simulation/phase16`
+- Deterministic plain-English scanner and backtest report explanations
+- Simulation API endpoint at `/api/simulation/phase17`
+- Live-stream safety checks for credentials, Indian market hours, WebSocket state, instrument readiness, underlying resolution, tick freshness, and disabled live orders
+- Market-hours gate before starting the Kite WebSocket stream
+- Dashboard stream hardening panel with start gate, tick age, and safety-check status
+- Simulation API endpoint at `/api/simulation/phase18`
 - Tests for simulation labeling, risk sizing, secret boundaries, order blocking, instruments, ticks, state, candles, subscriptions, Kite provider behavior, strategy scoring, paper-journal behavior, persistence mapping, backtest replay behavior, backtest reporting, Kite historical normalization, and Kite option-history replay rows
 
 Not implemented yet:
 
-- Scheduled report reviews
-- Authentication and real multi-user account boundaries
-- AI explanation layer
+- External OAuth or hosted multi-user authentication
+- Production alerting and backups
 - Live order placement
 
 ## Architecture
@@ -107,7 +120,7 @@ Zerodha Kite WebSocket
   -> Alerts and paper trading
 ```
 
-Phases 1-14 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, real option historical candle ingestion for backtests, optional PostgreSQL persistence for journal entries and replay runs, read-only backtest reports, CSV report export, and saved report detail links. Scheduled review workflows and authentication come later.
+Phases 1-18 create the shell, provider contracts, live read-only stream, candle pipeline, indicator context, option-chain liquidity context, deterministic strategy scoring, a local paper-trade journal, simulated historical replay, Kite historical candle ingestion, multi-day replay aggregation, real option historical candle ingestion for backtests, optional PostgreSQL persistence for journal entries and replay runs, read-only backtest reports, CSV report export, saved report detail links, report reviews, local owner authentication, deterministic explanations, and live-mode safety gates. Live order placement remains intentionally disabled.
 
 ## Technology
 
@@ -177,9 +190,11 @@ REDIS_URL=
 NEXT_PUBLIC_APP_URL=
 NEXT_PUBLIC_MARKET_DATA_MODE=
 APP_AUTH_SECRET=
+APP_OWNER_ACCESS_CODE=
 ```
 
 Only variables prefixed with `NEXT_PUBLIC_` may be exposed to browser code. `KITE_API_SECRET` must remain server-side.
+When `APP_AUTH_SECRET` is set or live mode is enabled, private pages and APIs require an owner session. `APP_OWNER_ACCESS_CODE` is the local login code; if it is omitted, `APP_AUTH_SECRET` is used as the owner code.
 
 ## Zerodha Setup
 
@@ -421,6 +436,59 @@ The Phase 14 endpoint marker is read-only:
 curl http://localhost:3000/api/simulation/phase14
 ```
 
+Phase 15 adds scheduled report reviews:
+
+- `/reviews` provides a daily/weekly review workflow.
+- `/api/report-reviews` saves and lists review notes when PostgreSQL is available.
+- Each saved review stores selected report IDs and a comparison snapshot.
+- Live orders remain disabled.
+
+The Phase 15 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase15
+```
+
+Phase 16 adds local owner boundaries:
+
+- `/login` accepts the local owner access code.
+- `/api/auth/session` creates, checks, and clears a signed owner session cookie.
+- Saved reports, reviews, journal sync, Kite historical data, token callback, and stream controls are protected when auth is configured or live mode is enabled.
+- Simulation mode can still run without login when no auth secret is configured.
+- Live orders remain disabled.
+
+The Phase 16 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase16
+```
+
+Phase 17 adds deterministic explanations:
+
+- The dashboard explains the current scanner state and why `NO TRADE` remains valid.
+- Saved report pages explain replay results, strengths, cautions, and next review steps.
+- Explanations are generated locally from deterministic fields.
+- Live orders remain disabled.
+
+The Phase 17 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase17
+```
+
+Phase 18 adds live-mode hardening:
+
+- Kite stream startup is blocked outside the configured Indian equity session.
+- Stream status includes market-hours state, tick age, freshness, start gate, and safety checks.
+- Signal readiness requires a connected stream, fresh data, open market session, and good data quality.
+- Safety checks explicitly confirm live order execution is disabled.
+
+The Phase 18 endpoint marker is read-only:
+
+```bash
+curl http://localhost:3000/api/simulation/phase18
+```
+
 ## Database
 
 The Prisma schema includes:
@@ -443,6 +511,7 @@ The Prisma schema includes:
 - `DailyPerformance`
 - `Backtest`
 - `BacktestTrade`
+- `ReportReview`
 
 Live ticks are not intended to be stored in PostgreSQL indefinitely. The default persistence layer stores candles, signals, trades, plans, performance, and selected snapshots.
 
@@ -460,8 +529,10 @@ Live mode will require:
 - `KITE_API_SECRET`
 - `KITE_ACCESS_TOKEN`
 - `DATABASE_URL`
+- `APP_AUTH_SECRET`
+- `APP_OWNER_ACCESS_CODE`
 
-Live mode must not start signal generation until WebSocket health and data-quality checks pass.
+Live mode must not start signal generation until WebSocket health, market-hours, freshness, and data-quality checks pass.
 
 ## Testing
 
@@ -469,6 +540,7 @@ Run:
 
 ```bash
 npm run typecheck
+npm run lint
 npm run test
 npm run build
 ```
@@ -494,10 +566,14 @@ Tests cover:
 - Phase 12 backtest report records, filters, and summary totals
 - Phase 13 report query parsing and CSV export
 - Phase 14 report detail records and encoded share paths
+- Phase 15 report review validation and comparison snapshots
+- Phase 16 signed owner session validation
+- Phase 17 deterministic scanner and report explanations
+- Phase 18 market-hours and tick-freshness live stream safety gates
 
 ## Market Hours
 
-The app uses `Asia/Kolkata`. Intraday signal generation must be restricted to configured exchange session windows in later phases.
+The app uses `Asia/Kolkata`. Live stream startup is gated to the configured Indian equity session, and signal readiness requires fresh ticks during that session.
 
 ## Strategy
 

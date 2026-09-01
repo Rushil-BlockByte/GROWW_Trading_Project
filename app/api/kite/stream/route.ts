@@ -1,14 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAppUserForApi } from "@/lib/auth/api";
 import { getLiveKiteStreamService } from "@/lib/zerodha/live-stream-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   return NextResponse.json(getLiveKiteStreamService().getSnapshot());
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   const body = (await request.json().catch(() => ({}))) as { action?: string };
   const service = getLiveKiteStreamService();
 
@@ -26,13 +35,17 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   } catch (error) {
+    const snapshot = service.getSnapshot();
+    const expectedStartBlock = body.action === "start" && !snapshot.streamStartAllowed;
+
     return NextResponse.json(
       {
         ok: false,
+        blocked: expectedStartBlock,
         message: error instanceof Error ? error.message : "Kite stream action failed.",
-        snapshot: service.getSnapshot(),
+        snapshot,
       },
-      { status: 500 },
+      { status: expectedStartBlock ? 409 : 500 },
     );
   }
 }

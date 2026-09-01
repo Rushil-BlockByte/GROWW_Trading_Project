@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireAppUserForApi } from "@/lib/auth/api";
 import { calculatePaperJournalSummary, isPaperJournalEntry } from "@/lib/paper-trading/journal";
 import {
   listPaperJournalEntries,
@@ -31,6 +32,10 @@ function entriesFromPayload(payload: unknown): PaperJournalEntry[] {
 }
 
 export async function GET(request: NextRequest) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   try {
     const result = await listPaperJournalEntries({
       limit: parseLimit(request.nextUrl.searchParams.get("limit")),
@@ -57,6 +62,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   let entries: PaperJournalEntry[] = [];
 
   try {

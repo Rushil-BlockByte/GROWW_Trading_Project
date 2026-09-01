@@ -11,6 +11,7 @@ import {
   CalendarDays,
   CandlestickChart,
   CircleDollarSign,
+  ClipboardCheck,
   Copy,
   Database,
   Download,
@@ -19,6 +20,7 @@ import {
   Gauge,
   History,
   Layers,
+  MessageSquareText,
   PauseCircle,
   Power,
   Radio,
@@ -48,6 +50,7 @@ import {
 import { backtestReportQueryString } from "@/lib/backtesting/backtest-report-query";
 import { backtestReportSharePath } from "@/lib/backtesting/backtest-report-share";
 import { getMarketDataModeLabel } from "@/lib/config/market";
+import { explainScannerSnapshot } from "@/lib/explanations/trading-explanations";
 import {
   calculatePaperJournalSummary,
   canCreatePaperTrade,
@@ -509,6 +512,12 @@ export function DashboardShell({
                 Daily Plan
               </Link>
             </Button>
+            <Button asChild variant="outline">
+              <Link href="/reviews">
+                <ClipboardCheck className="h-4 w-4" />
+                Reviews
+              </Link>
+            </Button>
           </div>
         </header>
 
@@ -522,6 +531,8 @@ export function DashboardShell({
           <IndicatorContextPanel snapshot={snapshot} />
           <OpportunityScanner snapshot={snapshot} />
         </section>
+
+        <ScannerExplanationPanel snapshot={snapshot} />
 
         <section className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
           <OptionChainContextPanel context={snapshot.phase5} />
@@ -633,6 +644,58 @@ function useBacktestPersistence(result: BacktestResult | MultiDayBacktestResult)
   }, [result]);
 
   return { save, state };
+}
+
+function explanationVariant(verdict: ReturnType<typeof explainScannerSnapshot>["verdict"]) {
+  if (verdict === "positive") return "success" as const;
+  if (verdict === "caution") return "destructive" as const;
+  if (verdict === "watch") return "warning" as const;
+
+  return "muted" as const;
+}
+
+function ScannerExplanationPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
+  const explanation = useMemo(() => explainScannerSnapshot(snapshot), [snapshot]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquareText className="h-5 w-5 text-accent" />
+              Scanner Explanation
+            </CardTitle>
+            <CardDescription>{explanation.headline}</CardDescription>
+          </div>
+          <Badge variant={explanationVariant(explanation.verdict)}>
+            {explanation.verdict.replace("_", " ")}
+          </Badge>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-2 rounded-md border bg-muted/35 p-3 text-sm">
+          <p className="font-semibold">Summary</p>
+          <p className="text-muted-foreground">{explanation.summary}</p>
+        </div>
+        <ExplanationList label="Working" items={explanation.strengths} />
+        <ExplanationList label="Needs Patience" items={explanation.cautions} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function ExplanationList({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div className="grid gap-2 rounded-md border bg-muted/35 p-3 text-sm">
+      <p className="font-semibold">{label}</p>
+      <ul className="grid gap-1 text-muted-foreground">
+        {items.slice(0, 4).map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </div>
+  );
 }
 
 function BacktestReportsPanel({
@@ -1594,6 +1657,13 @@ function OiLevelList({ title, levels }: { title: string; levels: OptionOpenInter
   );
 }
 
+function streamSafetyVariant(status: LiveKiteStreamSnapshot["safetyChecks"][number]["status"]) {
+  if (status === "pass") return "success" as const;
+  if (status === "block") return "destructive" as const;
+
+  return "warning" as const;
+}
+
 function LiveConnectionPanel() {
   const [status, setStatus] = useState<LiveKiteStreamSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1648,7 +1718,7 @@ function LiveConnectionPanel() {
     };
   }, [loadStatus]);
 
-  const canStart = Boolean(status?.configured.apiKey && status.configured.accessToken);
+  const canStart = Boolean(status?.streamStartAllowed);
   const connected = Boolean(status?.provider.connected);
 
   return (
@@ -1668,6 +1738,9 @@ function LiveConnectionPanel() {
           <Badge variant={status?.dataQualityGateOpen ? "success" : "warning"}>
             {status?.dataQualityGateOpen ? "Data gate open" : "Data gated"}
           </Badge>
+          <Badge variant={status?.marketSession.open ? "success" : "destructive"}>
+            {status?.marketSession.open ? "Market open" : "Market closed"}
+          </Badge>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-sm">
@@ -1675,6 +1748,16 @@ function LiveConnectionPanel() {
           <Metric label="Subscribed" value={String(status?.provider.subscriptionCount ?? 0)} />
           <Metric label="Tracked" value={String(status?.marketState.instrumentsTracked ?? 0)} />
           <Metric label="Rejected" value={String(status?.provider.rejectedSubscriptions ?? 0)} />
+          <Metric
+            label="Tick age"
+            value={
+              status?.freshness.lastTickAgeSeconds === null ||
+              status?.freshness.lastTickAgeSeconds === undefined
+                ? "Pending"
+                : `${status.freshness.lastTickAgeSeconds}s`
+            }
+          />
+          <Metric label="Start gate" value={canStart ? "Ready" : "Blocked"} />
         </div>
 
         <div className="grid gap-2">
@@ -1707,6 +1790,23 @@ function LiveConnectionPanel() {
               <div key={instrument.instrumentToken} className="flex justify-between gap-2">
                 <span>{instrument.tradingsymbol}</span>
                 <span>{instrument.mode}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+
+        {status?.safetyChecks.length ? (
+          <div className="grid gap-2">
+            {status.safetyChecks.map((check) => (
+              <div
+                key={check.key}
+                className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border bg-muted/35 px-3 py-2 text-xs"
+              >
+                <span className="min-w-0">
+                  <span className="block font-semibold">{check.label}</span>
+                  <span className="block text-muted-foreground">{check.message}</span>
+                </span>
+                <Badge variant={streamSafetyVariant(check.status)}>{check.status}</Badge>
               </div>
             ))}
           </div>

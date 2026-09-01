@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireAppUserForApi } from "@/lib/auth/api";
 import { getPersistedBacktestDetail } from "@/lib/persistence/backtest-store";
 
 export const runtime = "nodejs";
@@ -11,6 +12,10 @@ type BacktestDetailRouteContext = {
 };
 
 export async function GET(_request: Request, { params }: BacktestDetailRouteContext) {
+  const auth = await requireAppUserForApi();
+
+  if (auth.response) return auth.response;
+
   try {
     const { id } = await params;
     const result = await getPersistedBacktestDetail({ id });

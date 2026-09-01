@@ -4,6 +4,13 @@ import { CandleBuilder } from "@/lib/market/candle-builder";
 import { MarketStateStore } from "@/lib/market/market-state";
 import { ZerodhaMarketDataProvider } from "@/lib/providers/zerodha-market-data-provider";
 import { downloadKiteInstruments } from "@/lib/zerodha/instruments-client";
+import {
+  buildLiveStreamSafetySnapshot,
+  getLiveStreamMarketSession,
+  type LiveStreamFreshness,
+  type LiveStreamMarketSession,
+  type LiveStreamSafetyCheck,
+} from "@/lib/zerodha/live-stream-safety";
 import { resolveInitialLiveUniverse } from "@/lib/zerodha/live-universe";
 import type { InstrumentRecord } from "@/types/instruments";
 
@@ -28,6 +35,10 @@ export type LiveKiteStreamSnapshot = {
   marketState: ReturnType<MarketStateStore["getSummary"]>;
   activeCandleCount: number;
   completedCandleCount: number;
+  marketSession: LiveStreamMarketSession;
+  freshness: LiveStreamFreshness;
+  safetyChecks: LiveStreamSafetyCheck[];
+  streamStartAllowed: boolean;
   dataQualityGateOpen: boolean;
   signalGenerationAllowed: boolean;
   liveOrdersEnabled: false;
@@ -53,6 +64,13 @@ export class LiveKiteStreamService {
 
     if (!config.kiteApiKey || !config.kiteAccessToken) {
       this.lastError = "Missing KITE_API_KEY or KITE_ACCESS_TOKEN.";
+      throw new Error(this.lastError);
+    }
+
+    const marketSession = getLiveStreamMarketSession();
+
+    if (!marketSession.open) {
+      this.lastError = marketSession.message;
       throw new Error(this.lastError);
     }
 
@@ -124,8 +142,22 @@ export class LiveKiteStreamService {
         ?.getDesiredSubscriptions()
         .map((subscription) => [subscription.instrumentToken, subscription.mode]) ?? [],
     );
+    const safety = buildLiveStreamSafetySnapshot({
+      configured: {
+        apiKey: Boolean(config.kiteApiKey),
+        accessToken: Boolean(config.kiteAccessToken),
+        apiSecret: Boolean(config.kiteApiSecret),
+      },
+      instrumentMasterCount: this.instruments.length,
+      marketState: stateSummary,
+      provider: providerStatus,
+      unresolvedUnderlyings: this.unresolvedUnderlyings,
+    });
     const dataQualityGateOpen =
-      providerStatus.connected && stateSummary.dataQuality === "GOOD";
+      providerStatus.connected &&
+      stateSummary.dataQuality === "GOOD" &&
+      safety.marketSession.open &&
+      safety.freshness.status === "pass";
 
     return {
       configured: {
@@ -148,6 +180,10 @@ export class LiveKiteStreamService {
       marketState: stateSummary,
       activeCandleCount: this.candleBuilder?.getActiveCandles().length ?? 0,
       completedCandleCount: this.candleBuilder?.getCompletedCandles().length ?? 0,
+      marketSession: safety.marketSession,
+      freshness: safety.freshness,
+      safetyChecks: safety.safetyChecks,
+      streamStartAllowed: safety.startAllowed,
       dataQualityGateOpen,
       signalGenerationAllowed: false,
       liveOrdersEnabled: false,

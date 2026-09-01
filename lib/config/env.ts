@@ -17,6 +17,7 @@ export type ServerConfig = ClientSafeConfig & {
   databaseUrl?: string;
   redisUrl?: string;
   appAuthSecret?: string;
+  appOwnerAccessCode?: string;
 };
 
 type EnvironmentRecord = Record<string, string | undefined>;
@@ -37,6 +38,7 @@ export function getServerConfig(env: EnvironmentRecord = process.env): ServerCon
     databaseUrl: env.DATABASE_URL,
     redisUrl: env.REDIS_URL,
     appAuthSecret: env.APP_AUTH_SECRET,
+    appOwnerAccessCode: env.APP_OWNER_ACCESS_CODE,
   };
 }
 

@@ -82,6 +82,7 @@ model User {
   paperJournalEntries PaperJournalEntry[]
   dailyPerformance    DailyPerformance[]
   backtests           Backtest[]
+  reportReviews       ReportReview[]
 
   @@index([email])
 }
@@ -531,4 +532,25 @@ model BacktestTrade {
   @@index([underlying])
   @@index([expiry])
   @@index([outcome])
+}
+
+model ReportReview {
+  id                String   @id @default(cuid())
+  userId            String
+  cadence           String
+  periodStart       DateTime
+  periodEnd         DateTime
+  title             String
+  notes             String
+  selectedReportIds Json
+  comparison        Json
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([cadence])
+  @@index([periodStart])
+  @@index([periodEnd])
+  @@index([createdAt])
 }

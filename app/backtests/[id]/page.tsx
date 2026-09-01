@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { cache } from "react";
 import {
   ArrowLeft,
@@ -8,6 +9,7 @@ import {
   Database,
   ExternalLink,
   ListChecks,
+  MessageSquareText,
   ShieldCheck,
   TrendingUp,
 } from "lucide-react";
@@ -19,6 +21,8 @@ import {
   getPersistedBacktestDetail,
   type BacktestDetailPersistenceResult,
 } from "@/lib/persistence/backtest-store";
+import { getOptionalAppUser } from "@/lib/auth/session";
+import { explainBacktestReport } from "@/lib/explanations/trading-explanations";
 import type {
   BacktestReportDetail,
   BacktestReportDetailTrade,
@@ -114,6 +118,14 @@ function outcomeVariant(outcome: string | null) {
   return "muted" as const;
 }
 
+function explanationVariant(verdict: ReturnType<typeof explainBacktestReport>["verdict"]) {
+  if (verdict === "positive") return "success" as const;
+  if (verdict === "caution") return "destructive" as const;
+  if (verdict === "watch") return "warning" as const;
+
+  return "muted" as const;
+}
+
 function reportDescription(report: BacktestReportDetail) {
   return `${formatReportKind(report.record.kind)} ${report.record.underlying} backtest report with ${report.record.trades} paper-only trades.`;
 }
@@ -122,6 +134,19 @@ export async function generateMetadata({
   params,
 }: BacktestReportPageProps): Promise<Metadata> {
   const { id } = await params;
+  const user = await getOptionalAppUser();
+
+  if (!user) {
+    return {
+      title: "Private Backtest Report",
+      description: "Owner login is required to view this report.",
+      robots: {
+        index: false,
+        follow: false,
+      },
+    };
+  }
+
   const result = await loadBacktestReport(id);
   const title = result.report
     ? `${result.report.record.name} | Backtest Report`
@@ -153,6 +178,12 @@ export async function generateMetadata({
 
 export default async function BacktestReportPage({ params }: BacktestReportPageProps) {
   const { id } = await params;
+  const user = await getOptionalAppUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
   const result = await loadBacktestReport(id);
 
   if (!result.report) {
@@ -161,6 +192,7 @@ export default async function BacktestReportPage({ params }: BacktestReportPageP
 
   const report = result.report;
   const { assumptions, record, sessions, summary, trades } = report;
+  const explanation = explainBacktestReport(report);
 
   return (
     <main className="min-h-screen bg-background">
@@ -243,6 +275,28 @@ export default async function BacktestReportPage({ params }: BacktestReportPageP
             </CardContent>
           </Card>
         </section>
+
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <CardTitle className="flex items-center gap-2">
+                <MessageSquareText className="h-5 w-5 text-accent" />
+                Plain-English Explanation
+              </CardTitle>
+              <Badge variant={explanationVariant(explanation.verdict)}>
+                {explanation.verdict.replace("_", " ")}
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-2 rounded-md border bg-muted/35 p-3 text-sm">
+              <p className="font-semibold">{explanation.headline}</p>
+              <p className="text-muted-foreground">{explanation.summary}</p>
+            </div>
+            <ExplanationList label="What Worked" items={explanation.strengths} />
+            <ExplanationList label="What To Watch" items={explanation.cautions} />
+          </CardContent>
+        </Card>
 
         {sessions.length ? (
           <Card>
@@ -367,6 +421,19 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="rounded-md border bg-muted/35 px-3 py-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
       <p className="mt-1 font-semibold tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function ExplanationList({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div className="grid gap-2 rounded-md border bg-muted/35 p-3 text-sm">
+      <p className="font-semibold">{label}</p>
+      <ul className="grid gap-1 text-muted-foreground">
+        {items.slice(0, 4).map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
     </div>
   );
 }

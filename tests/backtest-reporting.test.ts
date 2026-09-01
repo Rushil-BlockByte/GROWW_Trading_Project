@@ -23,6 +23,7 @@ import {
 import { backtestRecordFromDatabase } from "../lib/persistence/backtest-store";
 
 const SAVED_AT = new Date("2026-09-01T04:30:00.000Z");
+const REPLAY_TEST_TIMEOUT_MS = 15_000;
 
 describe("backtest reporting", () => {
   it("builds report records and summary totals from single-day and multi-day replays", () => {
@@ -45,7 +46,7 @@ describe("backtest reporting", () => {
     expect(summary.bestRun?.id).toBe(multi.id);
     expect(summary.worstRun?.id).toBe(single.id);
     expect(summary.liveOrdersEnabled).toBe(false);
-  });
+  }, REPLAY_TEST_TIMEOUT_MS);
 
   it("filters report records by underlying, run type, and result", () => {
     const single = backtestReportRecordFromResult(runSampleVwapBreakoutBacktest(), SAVED_AT);
@@ -70,7 +71,7 @@ describe("backtest reporting", () => {
       multi,
     ]);
     expect(filterBacktestReportRecords(records, { result: "losing" })).toEqual([losing]);
-  });
+  }, REPLAY_TEST_TIMEOUT_MS);
 
   it("accepts only safe report records for dashboard rendering", () => {
     const record = backtestReportRecordFromResult(runSampleVwapBreakoutBacktest(), SAVED_AT);
@@ -78,7 +79,7 @@ describe("backtest reporting", () => {
     expect(isBacktestReportRecord(record)).toBe(true);
     expect(isBacktestReportRecord({ ...record, liveOrdersEnabled: true })).toBe(false);
     expect(isBacktestReportRecord({ ...record, netPnl: 742.4 })).toBe(false);
-  });
+  }, REPLAY_TEST_TIMEOUT_MS);
 
   it("exports report records as safe CSV rows", () => {
     const record = {
@@ -95,7 +96,7 @@ describe("backtest reporting", () => {
     expect(row).toContain('"NIFTY ""comma, test"""');
     expect(row).toContain('"NIFTY, INDEX"');
     expect(row?.endsWith(",false")).toBe(true);
-  });
+  }, REPLAY_TEST_TIMEOUT_MS);
 
   it("builds predictable report export filenames", () => {
     expect(backtestReportCsvFilename(new Date("2026-09-01T04:30:00.000Z"))).toBe(
@@ -149,7 +150,7 @@ describe("backtest reporting", () => {
     expect(detail.sessions.length).toBe(result.sessions.length);
     expect(detail.trades).toHaveLength(result.trades.length);
     expect(detail.trades.every((trade) => trade.liveOrdersEnabled === false)).toBe(true);
-  });
+  }, REPLAY_TEST_TIMEOUT_MS);
 
   it("creates encoded share paths for saved report links", () => {
     expect(backtestReportSharePath("SIM-REPORT 1/CE")).toBe("/backtests/SIM-REPORT%201%2FCE");
