@@ -58,6 +58,26 @@ describe("paper-trade journal", () => {
     expect(guard.reason).toBe("Strategy setup is not confirmed.");
   });
 
+  it("blocks paper-trade capture until a closed 1-minute candle is ready", () => {
+    const snapshot = confirmedSnapshot();
+    const guard = canCreatePaperTrade({
+      ...snapshot,
+      phase2: {
+        ...snapshot.phase2,
+        candleConfirmation: {
+          ...snapshot.phase2.candleConfirmation,
+          decisionReady: false,
+          message: "Wait for the first 1-minute candle to close before taking a paper trade.",
+        },
+      },
+    });
+
+    expect(guard.allowed).toBe(false);
+    expect(guard.reason).toBe(
+      "Wait for the first 1-minute candle to close before taking a paper trade.",
+    );
+  });
+
   it("creates a journal note for any scanner state", () => {
     const entry = createJournalNoteFromSnapshot({
       id: "note-1",

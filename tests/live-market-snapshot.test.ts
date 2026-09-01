@@ -133,5 +133,69 @@ describe("live market snapshot", () => {
     expect(snapshot?.phase5.rowCount).toBe(11);
     expect(snapshot?.phase5ByUnderlying?.BANKNIFTY?.rowCount).toBe(11);
     expect(snapshot?.phase5ByUnderlying?.FINNIFTY?.rowCount).toBe(11);
+    expect(snapshot?.phase2.candleConfirmation.status).toBe("BUILDING");
+    expect(snapshot?.phase2.candleConfirmation.decisionReady).toBe(false);
+    expect(snapshot?.phase4.candleCount).toBe(0);
+  });
+
+  it("uses the last completed 1-minute candle for live indicators", () => {
+    const instruments = createSimulatedInstrumentMaster();
+    const repository = new InstrumentRepository(instruments);
+    const stateStore = new MarketStateStore(repository);
+    const candleBuilder = new CandleBuilder(["1m", "5m", "15m"]);
+    const firstTickAt = new Date("2026-09-01T04:00:00.000Z");
+    const secondTickAt = new Date("2026-09-01T04:01:00.000Z");
+    const niftyInstrument = repository.findByTradingsymbol("NSE", "NIFTY");
+
+    if (!niftyInstrument) {
+      throw new Error("Missing NIFTY instrument.");
+    }
+
+    const ticks = [
+      normalizeSimulatedTick({
+        instrumentToken: niftyInstrument.instrumentToken,
+        timestamp: firstTickAt,
+        lastPrice: "25100.00",
+        volume: 1000,
+        sequence: 1,
+      }),
+      normalizeSimulatedTick({
+        instrumentToken: niftyInstrument.instrumentToken,
+        timestamp: secondTickAt,
+        lastPrice: "25125.00",
+        volume: 1300,
+        sequence: 2,
+      }),
+    ];
+
+    for (const tick of ticks) {
+      stateStore.applyTick(tick, secondTickAt);
+      candleBuilder.applyTick(tick);
+    }
+
+    const snapshot = buildLiveMarketSnapshot({
+      repository,
+      stateStore,
+      candleBuilder,
+      provider: {
+        connected: true,
+        lastTickAt: secondTickAt.toISOString(),
+        reconnecting: false,
+        subscriptionCount: 1,
+        rejectedSubscriptions: 0,
+        reconnectCount: 0,
+        uptimeSeconds: 60,
+      },
+      instrumentMasterCount: instruments.length,
+      generatedAt: secondTickAt,
+    });
+
+    expect(snapshot?.phase2.candleConfirmation.status).toBe("BUILDING");
+    expect(snapshot?.phase2.candleConfirmation.decisionReady).toBe(true);
+    expect(snapshot?.phase2.candleConfirmation.lastCompletedCandleEnd).toBe(
+      "2026-09-01T04:01:00.000Z",
+    );
+    expect(snapshot?.phase4.candleCount).toBe(1);
+    expect(snapshot?.phase4.latestClose).toBe("25100.00");
   });
 });

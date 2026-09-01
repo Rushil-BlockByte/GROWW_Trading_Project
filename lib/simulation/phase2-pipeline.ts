@@ -4,6 +4,7 @@ import { InstrumentRepository } from "@/lib/instruments/instrument-repository";
 import { createSimulatedInstrumentMaster } from "@/lib/instruments/simulated-instruments";
 import { CandleBuilder } from "@/lib/market/candle-builder";
 import { MarketStateStore } from "@/lib/market/market-state";
+import { addMinutes } from "@/lib/market/session";
 import { SimulatedMarketDataProvider } from "@/lib/providers/simulated-market-data-provider";
 import type { SimulatedPhase2Pipeline } from "@/types/simulation";
 import type { InstrumentRecord } from "@/types/instruments";
@@ -104,6 +105,12 @@ export function createPhase2PipelineSnapshot(
   const activeCandles = candleBuilder
     .getActiveCandles()
     .filter((candle) => candle.instrumentToken === niftyToken);
+  const completedCandles = candleBuilder
+    .getCompletedCandles()
+    .filter((candle) => candle.instrumentToken === niftyToken && candle.interval === "1m");
+  const referenceCandle =
+    completedCandles.at(-1) ?? activeCandles.find((candle) => candle.interval === "1m");
+  const fallbackCandleEnd = addMinutes(SIMULATION_SESSION_START, 1).toISOString();
 
   return {
     instrumentMasterCount: instruments.length,
@@ -118,6 +125,16 @@ export function createPhase2PipelineSnapshot(
     dataQuality: stateSummary.dataQuality,
     latestTickToken,
     activeCandles,
-    completedCandleCount: candleBuilder.getCompletedCandles().length,
+    completedCandleCount: completedCandles.length,
+    candleConfirmation: {
+      status: "CONFIRMED",
+      currentCandleStart: null,
+      currentCandleEnd: null,
+      lastCompletedCandleStart: referenceCandle?.startTime ?? SIMULATION_SESSION_START.toISOString(),
+      lastCompletedCandleEnd: referenceCandle?.endTime ?? fallbackCandleEnd,
+      nextConfirmationTime: referenceCandle?.endTime ?? fallbackCandleEnd,
+      decisionReady: true,
+      message: "Replay snapshot uses a closed 1-minute candle for the indicator filter.",
+    },
   };
 }

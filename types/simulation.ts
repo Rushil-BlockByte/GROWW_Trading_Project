@@ -90,6 +90,17 @@ export type SimulatedMarketSnapshot = {
   phase6: StrategyEvaluation;
 };
 
+export type OneMinuteCandleConfirmation = {
+  status: "WAITING_FOR_TICK" | "BUILDING" | "CONFIRMED";
+  currentCandleStart: string | null;
+  currentCandleEnd: string | null;
+  lastCompletedCandleStart: string | null;
+  lastCompletedCandleEnd: string | null;
+  nextConfirmationTime: string | null;
+  decisionReady: boolean;
+  message: string;
+};
+
 export type SimulatedPhase2Pipeline = {
   instrumentMasterCount: number;
   selectedUnderlying: UnderlyingSymbol;
@@ -104,4 +115,5 @@ export type SimulatedPhase2Pipeline = {
   latestTickToken?: number;
   activeCandles: MarketCandleData[];
   completedCandleCount: number;
+  candleConfirmation: OneMinuteCandleConfirmation;
 };

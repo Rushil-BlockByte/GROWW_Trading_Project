@@ -98,6 +98,15 @@ export function canCreatePaperTrade(snapshot: SimulatedMarketSnapshot): PaperTra
     };
   }
 
+  if (!snapshot.phase2.candleConfirmation.decisionReady) {
+    return {
+      allowed: false,
+      reason:
+        snapshot.phase2.candleConfirmation.message ||
+        "Wait for the current 1-minute candle to close before taking a paper trade.",
+    };
+  }
+
   if (snapshot.phase6.state !== "CONFIRMED" || snapshot.phase6.direction === "NO TRADE") {
     return {
       allowed: false,

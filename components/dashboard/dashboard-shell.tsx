@@ -252,6 +252,22 @@ function emaTrendVariant(trend: SimulatedMarketSnapshot["phase4"]["emaTrend"]) {
   return "muted" as const;
 }
 
+function candleConfirmationVariant(
+  status: SimulatedMarketSnapshot["phase2"]["candleConfirmation"]["status"],
+) {
+  if (status === "CONFIRMED") return "success" as const;
+  if (status === "BUILDING") return "warning" as const;
+  return "muted" as const;
+}
+
+function candleConfirmationLabel(
+  status: SimulatedMarketSnapshot["phase2"]["candleConfirmation"]["status"],
+) {
+  if (status === "CONFIRMED") return "Closed";
+  if (status === "BUILDING") return "Building";
+  return "Waiting";
+}
+
 function liquidityVariant(status: OptionLiquidityStatus) {
   return status === "TRADABLE" ? "success" as const : "destructive" as const;
 }
@@ -307,6 +323,25 @@ function formatJournalTime(value: string) {
     minute: "2-digit",
     timeZone: "Asia/Kolkata",
   });
+}
+
+function formatKolkataTime(value: string | null | undefined) {
+  if (!value) return "Pending";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Pending";
+
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone: "Asia/Kolkata",
+  });
+}
+
+function formatCandleWindow(start: string | null, end: string | null) {
+  if (!start || !end) return "Waiting";
+
+  return `${formatKolkataTime(start)} - ${formatKolkataTime(end)}`;
 }
 
 function formatBacktestWindow(startedAt: string, endedAt: string) {
@@ -1606,6 +1641,7 @@ function PaperJournalEntryRow({ entry }: { entry: PaperJournalEntry }) {
 function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   const indicator = snapshot.phase4;
   const openingRange = indicator.openingRange15;
+  const candleConfirmation = snapshot.phase2.candleConfirmation;
 
   return (
     <Card>
@@ -1629,6 +1665,40 @@ function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
+        <div className="rounded-md border bg-muted/40 p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-2 text-sm font-semibold">
+              <CandlestickChart className="h-4 w-4 text-accent" />
+              1m Candle Confirmation
+            </p>
+            <Badge variant={candleConfirmationVariant(candleConfirmation.status)}>
+              {candleConfirmationLabel(candleConfirmation.status)}
+            </Badge>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-4">
+            <Metric
+              label="Current 1m"
+              value={formatCandleWindow(
+                candleConfirmation.currentCandleStart,
+                candleConfirmation.currentCandleEnd,
+              )}
+            />
+            <Metric
+              label="Last closed"
+              value={formatKolkataTime(candleConfirmation.lastCompletedCandleEnd)}
+            />
+            <Metric
+              label="Next close"
+              value={formatKolkataTime(candleConfirmation.nextConfirmationTime)}
+            />
+            <Metric
+              label="Decision filter"
+              value={candleConfirmation.decisionReady ? "Ready" : "Wait"}
+            />
+          </div>
+          <p className="mt-3 text-sm text-muted-foreground">{candleConfirmation.message}</p>
+        </div>
+
         <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
           <Metric label="Close" value={formatIndicator(indicator.latestClose)} />
           <Metric label="VWAP" value={formatIndicator(indicator.vwap)} />
