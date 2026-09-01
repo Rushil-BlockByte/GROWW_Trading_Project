@@ -1,6 +1,10 @@
 import Decimal from "decimal.js";
 import { DEFAULT_RISK_CONFIGURATION, type RiskConfiguration } from "@/lib/risk/defaults";
 import { calculatePositionSize } from "@/lib/risk/position-sizing";
+import {
+  OPTION_TARGET_MAX_POINTS,
+  OPTION_TARGET_MIN_POINTS,
+} from "@/lib/trading/option-targets";
 import type {
   PaperJournalEntry,
   PaperJournalSummary,
@@ -23,7 +27,7 @@ function toFixed(value: Decimal.Value, places = 2) {
 }
 
 function sanitizeNotes(notes: string) {
-  return notes.trim().slice(0, 1_000);
+  return notes.trim().slice(0, 4_000);
 }
 
 function tradeSideForOption(optionSide: PaperJournalEntry["optionSide"]): PaperTradeSide | null {
@@ -37,6 +41,10 @@ function optionStopFromEntry(entryPrice: Decimal.Value) {
   const entry = toDecimal(entryPrice);
 
   return entry.minus(entry.mul(PAPER_OPTION_STOP_PERCENT).div(100));
+}
+
+function optionTargetFromEntry(entryPrice: Decimal.Value, points: number) {
+  return toDecimal(entryPrice).plus(points);
 }
 
 function baseEntry({
@@ -163,8 +171,8 @@ export function createJournalNoteFromSnapshot({
     expiry: snapshot.phase5.expiry,
     entryPrice: null,
     stopPrice: null,
-    targetOne: snapshot.phase6.entryPlan?.targetOne ?? null,
-    targetTwo: snapshot.phase6.entryPlan?.targetTwo ?? null,
+    targetOne: null,
+    targetTwo: null,
     quantity: 0,
     lots: 0,
   };
@@ -219,8 +227,8 @@ export function createPaperTradeFromSnapshot({
     expiry: snapshot.phase5.expiry,
     entryPrice: toFixed(entryPrice),
     stopPrice: toFixed(stopPrice),
-    targetOne: snapshot.phase6.entryPlan?.targetOne ?? null,
-    targetTwo: snapshot.phase6.entryPlan?.targetTwo ?? null,
+    targetOne: toFixed(optionTargetFromEntry(entryPrice, OPTION_TARGET_MIN_POINTS)),
+    targetTwo: toFixed(optionTargetFromEntry(entryPrice, OPTION_TARGET_MAX_POINTS)),
     quantity: positionSize.quantity,
     lots: positionSize.lots,
     ruleViolations,

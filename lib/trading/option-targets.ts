@@ -1,0 +1,2 @@
+export const OPTION_TARGET_MIN_POINTS = 12;
+export const OPTION_TARGET_MAX_POINTS = 20;

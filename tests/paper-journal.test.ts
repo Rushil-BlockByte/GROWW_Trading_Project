@@ -111,6 +111,8 @@ describe("paper-trade journal", () => {
     expect(entry.tradeSide).toBe("LONG_CALL");
     expect(entry.entryPrice).toBe("100.00");
     expect(entry.stopPrice).toBe("80.00");
+    expect(entry.targetOne).toBe("112.00");
+    expect(entry.targetTwo).toBe("120.00");
     expect(entry.quantity).toBe(75);
     expect(entry.lots).toBe(1);
     expect(entry.ruleViolations).toEqual([]);

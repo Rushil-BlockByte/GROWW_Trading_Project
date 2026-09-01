@@ -28,6 +28,7 @@ import {
   Save,
   ShieldAlert,
   ShieldCheck,
+  Target,
   TrendingUp,
   WifiOff,
 } from "lucide-react";
@@ -51,6 +52,13 @@ import { backtestReportQueryString } from "@/lib/backtesting/backtest-report-que
 import { backtestReportSharePath } from "@/lib/backtesting/backtest-report-share";
 import { getMarketDataModeLabel } from "@/lib/config/market";
 import { explainScannerSnapshot } from "@/lib/explanations/trading-explanations";
+import {
+  buildDailyIndexJournal,
+  DAILY_INDEX_JOURNAL_STORAGE_KEY,
+  OPTION_TARGET_MAX_POINTS,
+  OPTION_TARGET_MIN_POINTS,
+  type DailyIndexJournal,
+} from "@/lib/market-journal/daily-index-journal";
 import {
   calculatePaperJournalSummary,
   canCreatePaperTrade,
@@ -141,6 +149,13 @@ type BacktestSaveState = PersistenceUiState & {
   busy: boolean;
 };
 
+type SavedDailyIndexJournal = DailyIndexJournal & {
+  personalNotes: string;
+  savedAt: string;
+};
+
+type DailyIndexJournalBook = Record<string, SavedDailyIndexJournal>;
+
 type LiveRiskPlan = {
   contractLabel: string;
   contractStatus: "TRADABLE" | "NOT_TRADABLE";
@@ -152,6 +167,7 @@ type LiveRiskPlan = {
 };
 
 const BACKTEST_REPORTS_UPDATED_EVENT = "groww-backtests-updated";
+const PAPER_JOURNAL_UPDATED_EVENT = "groww-paper-journal-updated";
 
 const reportUnderlyingOptions: Array<{
   label: string;
@@ -266,6 +282,22 @@ function candleConfirmationLabel(
   if (status === "CONFIRMED") return "Closed";
   if (status === "BUILDING") return "Building";
   return "Waiting";
+}
+
+function dailyJournalToneVariant(tone: DailyIndexJournal["marketTone"]) {
+  if (tone === "Bullish") return "success" as const;
+  if (tone === "Bearish") return "destructive" as const;
+  if (tone === "Mixed") return "warning" as const;
+  return "muted" as const;
+}
+
+function formatOptionTargetBand(entryPrice: string | null | undefined) {
+  if (!entryPrice) return "Waiting";
+
+  const entry = Number(entryPrice);
+  if (!Number.isFinite(entry) || entry <= 0) return "Waiting";
+
+  return `${formatInr(entry + OPTION_TARGET_MIN_POINTS)} - ${formatInr(entry + OPTION_TARGET_MAX_POINTS)}`;
 }
 
 function liquidityVariant(status: OptionLiquidityStatus) {
@@ -421,6 +453,47 @@ function parseBacktestReportResponseRecords(data: BacktestApiResponse) {
       : [];
 
   return records.filter(isBacktestReportRecord);
+}
+
+function isSavedDailyIndexJournal(value: unknown): value is SavedDailyIndexJournal {
+  if (!value || typeof value !== "object") return false;
+
+  const journal = value as Partial<SavedDailyIndexJournal>;
+
+  return (
+    typeof journal.tradeDate === "string" &&
+    typeof journal.generatedAt === "string" &&
+    typeof journal.savedAt === "string" &&
+    typeof journal.markdown === "string" &&
+    typeof journal.personalNotes === "string" &&
+    Array.isArray(journal.indexSummaries) &&
+    Array.isArray(journal.whatHappened) &&
+    Array.isArray(journal.nextDayPrep)
+  );
+}
+
+function loadDailyIndexJournalBook(): DailyIndexJournalBook {
+  try {
+    const parsed = JSON.parse(
+      window.localStorage.getItem(DAILY_INDEX_JOURNAL_STORAGE_KEY) ?? "{}",
+    ) as unknown;
+
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, value]) => isSavedDailyIndexJournal(value)),
+    ) as DailyIndexJournalBook;
+  } catch {
+    return {};
+  }
+}
+
+function dailyIndexJournalText(journal: DailyIndexJournal, personalNotes: string) {
+  const trimmedNotes = personalNotes.trim();
+
+  if (!trimmedNotes) return journal.markdown;
+
+  return `${journal.markdown}\n\n## My notes\n${trimmedNotes}`;
 }
 
 function reportSavedAtFromResult(result: BacktestResult | MultiDayBacktestResult) {
@@ -629,6 +702,7 @@ export function DashboardShell({
             </section>
 
             <ScannerExplanationPanel snapshot={liveSnapshot} />
+            <DailyIndexJournalPanel snapshot={liveSnapshot} />
 
             <section className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
               {selectedOptionContext ? (
@@ -644,7 +718,10 @@ export function DashboardShell({
             </section>
           </>
         ) : (
-          <LiveDataWaitingPanel status={liveStatus} />
+          <>
+            <LiveDataWaitingPanel status={liveStatus} />
+            <DailyIndexJournalWaitingPanel status={liveStatus} />
+          </>
         )}
 
         <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
@@ -807,6 +884,272 @@ function ExplanationList({ label, items }: { label: string; items: string[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+function DailyIndexJournalPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
+  const journal = useMemo(() => buildDailyIndexJournal(snapshot), [snapshot]);
+  const [personalNotes, setPersonalNotes] = useState("");
+  const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncState, setSyncState] = useState<PersistenceUiState>({
+    label: "Not saved",
+    message: "Save this day when your index read is ready.",
+    variant: "muted",
+  });
+  const optionTargetText = `${OPTION_TARGET_MIN_POINTS}-${OPTION_TARGET_MAX_POINTS} pts`;
+
+  useEffect(() => {
+    const loadSavedJournal = window.setTimeout(() => {
+      const savedJournal = loadDailyIndexJournalBook()[journal.tradeDate];
+
+      setPersonalNotes(savedJournal?.personalNotes ?? "");
+      setSavedAt(savedJournal?.savedAt ?? null);
+      setSyncState(
+        savedJournal
+          ? {
+              label: "Saved",
+              message: `Today's index journal was saved at ${formatJournalTime(savedJournal.savedAt)}.`,
+              variant: "success",
+            }
+          : {
+              label: "Not saved",
+              message: "Save this day when your index read is ready.",
+              variant: "muted",
+            },
+      );
+    }, 0);
+
+    return () => window.clearTimeout(loadSavedJournal);
+  }, [journal.tradeDate]);
+
+  const syncJournalNote = useCallback(
+    async (entry: PaperJournalEntry) => {
+      setSyncing(true);
+
+      try {
+        const response = await fetch("/api/paper-journal", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ entries: [entry] }),
+        });
+        const data = (await response.json()) as JournalApiResponse;
+
+        if (!response.ok || data.ok === false) {
+          throw new Error(data.message ?? data.persistence?.message ?? "Daily journal sync failed.");
+        }
+
+        setSyncState(persistenceUiState(data.persistence));
+        window.dispatchEvent(new Event(PAPER_JOURNAL_UPDATED_EVENT));
+      } catch (error) {
+        setSyncState({
+          label: "Local saved",
+          message:
+            error instanceof Error
+              ? `Saved locally. Journal sync failed: ${error.message}`
+              : "Saved locally. Journal sync failed.",
+          variant: "warning",
+        });
+      } finally {
+        setSyncing(false);
+      }
+    },
+    [],
+  );
+
+  const saveJournal = useCallback(() => {
+    const nextSavedAt = new Date().toISOString();
+    const notes = dailyIndexJournalText(journal, personalNotes);
+    const record: SavedDailyIndexJournal = {
+      ...journal,
+      personalNotes: personalNotes.trim(),
+      savedAt: nextSavedAt,
+    };
+    const entry = createJournalNoteFromSnapshot({
+      id: `daily-index-${journal.tradeDate}`,
+      now: nextSavedAt,
+      notes,
+      snapshot,
+    });
+    const book = loadDailyIndexJournalBook();
+    const localPaperEntries = parsePaperJournalEntries(
+      window.localStorage.getItem(PAPER_JOURNAL_STORAGE_KEY),
+    );
+    const nextPaperEntries = mergeJournalEntries([entry], localPaperEntries);
+
+    window.localStorage.setItem(
+      DAILY_INDEX_JOURNAL_STORAGE_KEY,
+      JSON.stringify({
+        ...book,
+        [journal.tradeDate]: record,
+      }),
+    );
+    window.localStorage.setItem(
+      PAPER_JOURNAL_STORAGE_KEY,
+      serializePaperJournalEntries(nextPaperEntries),
+    );
+    window.dispatchEvent(new Event(PAPER_JOURNAL_UPDATED_EVENT));
+    setSavedAt(nextSavedAt);
+    setSyncState({
+      label: "Saving",
+      message: "Saving today's index journal.",
+      variant: "warning",
+    });
+    void syncJournalNote(entry);
+  }, [journal, personalNotes, snapshot, syncJournalNote]);
+
+  const copyJournal = useCallback(async () => {
+    try {
+      await window.navigator.clipboard.writeText(
+        dailyIndexJournalText(journal, personalNotes),
+      );
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  }, [journal, personalNotes]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <BookOpenText className="h-5 w-5 text-accent" />
+              Daily Index Journal
+            </CardTitle>
+            <CardDescription>{journal.headline}</CardDescription>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={syncState.variant}>{syncState.label}</Badge>
+            <Badge variant={dailyJournalToneVariant(journal.marketTone)}>
+              {journal.marketTone}
+            </Badge>
+            <Badge variant="outline">
+              <Target className="h-3.5 w-3.5 text-primary" />
+              {optionTargetText}
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-4">
+        <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-4">
+          <Metric label="Trade date" value={journal.tradeDate} />
+          <Metric label="Saved" value={savedAt ? formatJournalTime(savedAt) : "Not saved"} />
+          <Metric label="Scanner" value={`${snapshot.phase6.direction} ${snapshot.phase6.score}/100`} />
+          <Metric label="Option aim" value={optionTargetText} />
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          {journal.indexSummaries.map((summary) => (
+            <div key={summary.symbol} className="grid gap-3 rounded-md border bg-muted/35 p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-semibold">{summary.label}</p>
+                  <p className="text-xs text-muted-foreground">{summary.symbol}</p>
+                </div>
+                <Badge variant="outline">{summary.lastPrice}</Badge>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <Metric label="Move" value={summary.move} />
+                <Metric label="VWAP" value={summary.vwapRead} />
+              </div>
+              <p className="break-words text-muted-foreground">
+                {summary.trendRead}. {summary.levelRead}.
+              </p>
+            </div>
+          ))}
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <DailyJournalList title="What Happened Today" items={journal.whatHappened} />
+          <DailyJournalList title="Next-Day Prep" items={journal.nextDayPrep} />
+          <DailyJournalList title="Execution Focus" items={journal.executionFocus} />
+        </div>
+
+        <Textarea
+          className="min-h-24"
+          value={personalNotes}
+          onChange={(event) => setPersonalNotes(event.target.value)}
+          placeholder="My notes for tomorrow: best index, avoid zones, personal mistake to watch, setup to wait for."
+        />
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground">
+            {savedAt
+              ? `Saved today's index journal at ${formatJournalTime(savedAt)}.`
+              : "Save this once after market close, or anytime you want to capture the current read."}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button type="button" variant="outline" onClick={() => void copyJournal()}>
+              <Copy className="h-4 w-4" />
+              {copied ? "Copied" : "Copy"}
+            </Button>
+            <Button type="button" onClick={saveJournal}>
+              <Save className={`h-4 w-4 ${syncing ? "animate-pulse" : ""}`} />
+              {syncing ? "Saving" : "Save Today"}
+            </Button>
+          </div>
+        </div>
+        <p className="text-xs text-muted-foreground">{syncState.message}</p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function DailyJournalList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div className="grid gap-2 rounded-md border bg-muted/35 p-3 text-sm">
+      <p className="font-semibold">{title}</p>
+      <ul className="grid gap-2 text-muted-foreground">
+        {items.map((item) => (
+          <li key={item} className="break-words">
+            {item}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function DailyIndexJournalWaitingPanel({ status }: { status: LiveKiteStreamSnapshot | null }) {
+  const connected = Boolean(status?.provider.connected);
+  const marketOpen = Boolean(status?.marketSession.open);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <BookOpenText className="h-5 w-5 text-accent" />
+              Daily Index Journal
+            </CardTitle>
+            <CardDescription>
+              It starts after live NIFTY, BANKNIFTY, and FINNIFTY ticks arrive.
+            </CardDescription>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={marketOpen ? "success" : "warning"}>
+              {marketOpen ? "Market open" : "Market closed"}
+            </Badge>
+            <Badge variant={connected ? "success" : "muted"}>
+              {connected ? "Stream connected" : "Waiting"}
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-3">
+        <Metric label="Index story" value="Waiting" />
+        <Metric label="Next-day prep" value="Waiting" />
+        <Metric
+          label="Option aim"
+          value={`${OPTION_TARGET_MIN_POINTS}-${OPTION_TARGET_MAX_POINTS} pts`}
+        />
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1459,7 +1802,7 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
   );
 
   useEffect(() => {
-    const loadJournal = window.setTimeout(() => {
+    const refreshJournal = () => {
       const stored = window.localStorage.getItem(PAPER_JOURNAL_STORAGE_KEY);
       const localEntries = parsePaperJournalEntries(stored);
       setEntries(localEntries);
@@ -1487,9 +1830,15 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
           });
         }
       })();
-    }, 0);
+    };
+    const loadJournal = window.setTimeout(refreshJournal, 0);
 
-    return () => window.clearTimeout(loadJournal);
+    window.addEventListener(PAPER_JOURNAL_UPDATED_EVENT, refreshJournal);
+
+    return () => {
+      window.clearTimeout(loadJournal);
+      window.removeEventListener(PAPER_JOURNAL_UPDATED_EVENT, refreshJournal);
+    };
   }, []);
 
   useEffect(() => {
@@ -1614,9 +1963,13 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
 
 function PaperJournalEntryRow({ entry }: { entry: PaperJournalEntry }) {
   const title = entry.optionSymbol ?? `${entry.underlying} ${entry.bias}`;
+  const targetDetail =
+    entry.targetOne && entry.targetTwo
+      ? `Target ${formatInr(entry.targetOne)} to ${formatInr(entry.targetTwo)}`
+      : "Target pending";
   const detail =
     entry.type === "PAPER_TRADE"
-      ? `Entry ${formatInr(entry.entryPrice ?? 0)} | Qty ${entry.quantity}`
+      ? `Entry ${formatInr(entry.entryPrice ?? 0)} | ${targetDetail} | Qty ${entry.quantity}`
       : `Score ${entry.score}/100 | ${entry.quality}`;
 
   return (
@@ -2210,6 +2563,7 @@ function Metric({ label, value }: { label: string; value: string }) {
 function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   const strategy = snapshot.phase6;
   const watchedOption = strategy.selectedContract?.label ?? "None";
+  const optionTargetBand = formatOptionTargetBand(strategy.selectedContract?.ltp);
   const watchedLevel = strategy.watchedLevel
     ? `${strategy.watchedLevel.label} ${formatIndicator(strategy.watchedLevel.value)}`
     : "None";
@@ -2277,6 +2631,10 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
           <div className="flex items-center justify-between gap-3">
             <span className="font-medium">Watched option</span>
             <span className="text-right text-muted-foreground">{watchedOption}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="font-medium">Option target</span>
+            <span className="text-right text-muted-foreground">{optionTargetBand}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="font-medium">Entry</span>
