@@ -1,9 +1,14 @@
 import { getServerConfig } from "@/lib/config/env";
+import { DEFAULT_UNDERLYINGS } from "@/lib/config/market";
 import { InstrumentRepository } from "@/lib/instruments/instrument-repository";
 import { CandleBuilder } from "@/lib/market/candle-builder";
 import { MarketStateStore } from "@/lib/market/market-state";
 import { ZerodhaMarketDataProvider } from "@/lib/providers/zerodha-market-data-provider";
 import { downloadKiteInstruments } from "@/lib/zerodha/instruments-client";
+import {
+  buildLiveMarketSnapshot,
+  type LiveOptionUniverseSnapshot,
+} from "@/lib/zerodha/live-market-snapshot";
 import {
   buildLiveStreamSafetySnapshot,
   getLiveStreamMarketSession,
@@ -13,6 +18,11 @@ import {
 } from "@/lib/zerodha/live-stream-safety";
 import { resolveInitialLiveUniverse } from "@/lib/zerodha/live-universe";
 import type { InstrumentRecord } from "@/types/instruments";
+import type { MarketTick, UnderlyingSymbol } from "@/types/market";
+import type { SimulatedMarketSnapshot } from "@/types/simulation";
+import { DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW } from "@/lib/zerodha/option-historical-config";
+
+const LIVE_OPTION_UNDERLYING: UnderlyingSymbol = "NIFTY";
 
 export type LiveKiteStreamSnapshot = {
   configured: {
@@ -41,6 +51,8 @@ export type LiveKiteStreamSnapshot = {
   streamStartAllowed: boolean;
   dataQualityGateOpen: boolean;
   signalGenerationAllowed: boolean;
+  marketSnapshot?: SimulatedMarketSnapshot;
+  marketSnapshotSource: "live" | "waiting";
   liveOrdersEnabled: false;
 };
 
@@ -52,6 +64,8 @@ export class LiveKiteStreamService {
   private instruments: InstrumentRecord[] = [];
   private subscribedInstruments: InstrumentRecord[] = [];
   private unresolvedUnderlyings: string[] = [];
+  private liveOptionUniverse?: LiveOptionUniverseSnapshot;
+  private optionSubscriptionPending = false;
   private startedAt?: Date;
   private lastError?: string;
 
@@ -74,11 +88,19 @@ export class LiveKiteStreamService {
       throw new Error(this.lastError);
     }
 
-    this.instruments = await downloadKiteInstruments({
-      apiKey: config.kiteApiKey,
-      accessToken: config.kiteAccessToken,
-      exchange: "NSE",
-    });
+    const [nseInstruments, nfoInstruments] = await Promise.all([
+      downloadKiteInstruments({
+        apiKey: config.kiteApiKey,
+        accessToken: config.kiteAccessToken,
+        exchange: "NSE",
+      }),
+      downloadKiteInstruments({
+        apiKey: config.kiteApiKey,
+        accessToken: config.kiteAccessToken,
+        exchange: "NFO",
+      }),
+    ]);
+    this.instruments = dedupeInstruments([...nseInstruments, ...nfoInstruments]);
     this.repository = new InstrumentRepository(this.instruments);
 
     const liveUniverse = resolveInitialLiveUniverse(this.repository);
@@ -92,14 +114,20 @@ export class LiveKiteStreamService {
 
     this.stateStore = new MarketStateStore(this.repository);
     this.candleBuilder = new CandleBuilder(["1m", "5m", "15m"]);
+    this.liveOptionUniverse = undefined;
+    this.optionSubscriptionPending = false;
     this.provider = new ZerodhaMarketDataProvider({
       apiKey: config.kiteApiKey,
       accessToken: config.kiteAccessToken,
       reconnectEnabled: true,
     });
     this.provider.onTick((tick) => {
-      this.stateStore?.applyTick(tick);
+      const result = this.stateStore?.applyTick(tick);
       this.candleBuilder?.applyTick(tick);
+
+      if (result?.accepted) {
+        void this.maybeSubscribeOptionUniverse(tick);
+      }
     });
 
     await this.provider.subscribe(liveUniverse.subscriptions);
@@ -158,6 +186,14 @@ export class LiveKiteStreamService {
       stateSummary.dataQuality === "GOOD" &&
       safety.marketSession.open &&
       safety.freshness.status === "pass";
+    const marketSnapshot = buildLiveMarketSnapshot({
+      repository: this.repository,
+      stateStore: this.stateStore,
+      candleBuilder: this.candleBuilder,
+      provider: providerStatus,
+      instrumentMasterCount: this.instruments.length,
+      optionUniverse: this.liveOptionUniverse,
+    });
 
     return {
       configured: {
@@ -186,9 +222,88 @@ export class LiveKiteStreamService {
       streamStartAllowed: safety.startAllowed,
       dataQualityGateOpen,
       signalGenerationAllowed: false,
+      marketSnapshot,
+      marketSnapshotSource: marketSnapshot ? "live" : "waiting",
       liveOrdersEnabled: false,
     };
   }
+
+  private async maybeSubscribeOptionUniverse(tick: MarketTick) {
+    if (
+      !this.repository ||
+      !this.provider ||
+      this.liveOptionUniverse ||
+      this.optionSubscriptionPending
+    ) {
+      return;
+    }
+
+    const instrument = this.repository.findByToken(tick.instrumentToken);
+
+    if (
+      instrument?.kind !== "INDEX" ||
+      instrument.underlyingSymbol !== LIVE_OPTION_UNDERLYING
+    ) {
+      return;
+    }
+
+    const config = DEFAULT_UNDERLYINGS.find(
+      (underlying) => underlying.symbol === LIVE_OPTION_UNDERLYING,
+    );
+    const expiry = this.repository.getNearestExpiry(LIVE_OPTION_UNDERLYING, new Date(tick.timestamp));
+
+    if (!config || !expiry) {
+      this.liveOptionUniverse = {
+        selectedUnderlying: LIVE_OPTION_UNDERLYING,
+        expiry: expiry ?? "",
+        atmStrike: "",
+        instruments: [],
+        missingContracts: 0,
+      };
+      return;
+    }
+
+    this.optionSubscriptionPending = true;
+
+    try {
+      const universe = this.repository.buildAtmOptionUniverse({
+        underlyingSymbol: LIVE_OPTION_UNDERLYING,
+        underlyingLastPrice: tick.lastPrice,
+        expiry,
+        strikeInterval: config.strikeInterval,
+        strikeWindow: DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW,
+      });
+
+      this.liveOptionUniverse = {
+        selectedUnderlying: LIVE_OPTION_UNDERLYING,
+        expiry: universe.expiry,
+        atmStrike: universe.atmStrike,
+        instruments: universe.instruments,
+        missingContracts: universe.missingContracts.length,
+      };
+
+      if (universe.instruments.length) {
+        await this.provider.subscribe(
+          universe.instruments.map((option) => ({
+            instrumentToken: option.instrumentToken,
+            mode: "FULL",
+          })),
+        );
+        this.subscribedInstruments = dedupeInstruments([
+          ...this.subscribedInstruments,
+          ...universe.instruments,
+        ]);
+      }
+    } finally {
+      this.optionSubscriptionPending = false;
+    }
+  }
+}
+
+function dedupeInstruments(instruments: InstrumentRecord[]) {
+  return Array.from(
+    new Map(instruments.map((instrument) => [instrument.instrumentToken, instrument])).values(),
+  );
 }
 
 const globalForKite = globalThis as unknown as {

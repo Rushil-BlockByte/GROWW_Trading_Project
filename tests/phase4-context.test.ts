@@ -31,7 +31,7 @@ describe("phase 4 indicator simulation", () => {
     const snapshot = createInitialMarketSnapshot();
 
     expect(snapshot.phase4.underlying).toBe("NIFTY");
-    expect(snapshot.phase4.vwap).toBe(String(snapshot.underlyings[0].vwap.toFixed(2)));
+    expect(snapshot.phase4.vwap).toBe(String(snapshot.underlyings[0].vwap?.toFixed(2)));
     expect(snapshot.signal.direction).toBe("NO TRADE");
     expect(snapshot.health.mode).toBe("simulation");
   });

@@ -5,7 +5,6 @@ import {
   runSampleMultiDayVwapBreakoutBacktest,
   runSampleVwapBreakoutBacktest,
 } from "@/lib/backtesting/vwap-breakout-backtest";
-import { createInitialMarketSnapshot } from "@/lib/simulation/market-snapshot";
 
 export default async function Home() {
   const user = await getOptionalAppUser();
@@ -18,7 +17,6 @@ export default async function Home() {
     <DashboardShell
       initialBacktestResult={runSampleVwapBreakoutBacktest()}
       initialMultiDayBacktestResult={runSampleMultiDayVwapBreakoutBacktest()}
-      initialSnapshot={createInitialMarketSnapshot()}
     />
   );
 }

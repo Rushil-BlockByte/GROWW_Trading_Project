@@ -13,19 +13,19 @@ import type { StrategyEvaluation } from "@/types/strategy";
 export type SimulatedUnderlying = {
   symbol: UnderlyingSymbol;
   label: string;
-  lastPrice: number;
-  change: number;
-  changePercent: number;
-  vwap: number;
-  vwapDistance: number;
+  lastPrice: number | null;
+  change: number | null;
+  changePercent: number | null;
+  vwap: number | null;
+  vwapDistance: number | null;
   trend: "Bullish" | "Bearish" | "Flat";
-  volumeRelative: number;
-  openInterest: number;
-  oiChange: number;
+  volumeRelative: number | null;
+  openInterest: number | null;
+  oiChange: number | null;
   regime: MarketRegime;
   dataQuality: DataQualityStatus;
-  support: number;
-  resistance: number;
+  support: number | null;
+  resistance: number | null;
 };
 
 export type SimulatedOptionLeg = {
@@ -36,6 +36,7 @@ export type SimulatedOptionLeg = {
   bid: number;
   ask: number;
   spreadPercent: number;
+  lotSize?: number;
 };
 
 export type SimulatedOptionRow = {

@@ -59,12 +59,12 @@ import {
   isPaperJournalEntry,
   MAX_PAPER_JOURNAL_ENTRIES,
   PAPER_JOURNAL_STORAGE_KEY,
+  PAPER_OPTION_STOP_PERCENT,
   parsePaperJournalEntries,
   serializePaperJournalEntries,
 } from "@/lib/paper-trading/journal";
 import { DEFAULT_RISK_CONFIGURATION } from "@/lib/risk/defaults";
 import { calculateDailyLossLimit, calculatePositionSize } from "@/lib/risk/position-sizing";
-import { createSimulatedMarketSnapshot } from "@/lib/simulation/market-snapshot";
 import {
   DEFAULT_HISTORICAL_OPTION_SPREAD_PERCENT,
   DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW,
@@ -99,7 +99,6 @@ import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/st
 type DashboardShellProps = {
   initialBacktestResult: BacktestResult;
   initialMultiDayBacktestResult: MultiDayBacktestResult;
-  initialSnapshot: SimulatedMarketSnapshot;
 };
 
 type PersistenceBadgeVariant = "success" | "warning" | "destructive" | "muted";
@@ -140,6 +139,16 @@ type BacktestApiResponse = {
 
 type BacktestSaveState = PersistenceUiState & {
   busy: boolean;
+};
+
+type LiveRiskPlan = {
+  contractLabel: string;
+  contractStatus: "TRADABLE" | "NOT_TRADABLE";
+  contractReason: string;
+  entryPrice: string;
+  stopPrice: string;
+  lotSize: number;
+  positionSize: ReturnType<typeof calculatePositionSize>;
 };
 
 const BACKTEST_REPORTS_UPDATED_EVENT = "groww-backtests-updated";
@@ -199,6 +208,22 @@ function formatSigned(value: number, suffix = "") {
 
 function formatIndicator(value: string | null, suffix = "") {
   return value ? `${formatNumber(Number(value))}${suffix}` : "Pending";
+}
+
+function formatOptionalNumber(value: number | null | undefined) {
+  return value === null || value === undefined ? "Pending" : formatNumber(value);
+}
+
+function formatOptionalSigned(value: number | null | undefined, suffix = "") {
+  return value === null || value === undefined ? "Pending" : formatSigned(value, suffix);
+}
+
+function formatOptionalRatio(value: number | null | undefined) {
+  return value === null || value === undefined ? "Pending" : `${formatNumber(value)}x`;
+}
+
+function formatNumericString(value: string | null | undefined) {
+  return value ? formatNumber(Number(value)) : "Pending";
 }
 
 function formatSignedIndicator(value: string | null, suffix = "") {
@@ -449,40 +474,66 @@ async function copyBacktestReportLink(record: BacktestReportRecord) {
   }
 }
 
+function buildLiveRiskPlan(
+  snapshot: SimulatedMarketSnapshot | undefined,
+  risk: typeof DEFAULT_RISK_CONFIGURATION,
+): LiveRiskPlan | null {
+  const selectedContract = snapshot?.phase6.selectedContract;
+
+  if (!snapshot || !selectedContract) return null;
+
+  const optionRow = snapshot.optionChain.find((row) => row.strike === selectedContract.strike);
+  const selectedLeg = selectedContract.side === "CE" ? optionRow?.call : optionRow?.put;
+  const lotSize = selectedLeg?.lotSize;
+  const entryPrice = Number(selectedContract.ltp);
+  const stopPercent = Number(PAPER_OPTION_STOP_PERCENT);
+  const stopPrice = entryPrice - (entryPrice * stopPercent) / 100;
+
+  if (
+    !Number.isFinite(entryPrice) ||
+    entryPrice <= 0 ||
+    !Number.isFinite(stopPrice) ||
+    stopPrice <= 0 ||
+    typeof lotSize !== "number" ||
+    !Number.isInteger(lotSize) ||
+    lotSize <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    contractLabel: selectedContract.label,
+    contractStatus: selectedContract.status,
+    contractReason: selectedContract.reason,
+    entryPrice: entryPrice.toFixed(2),
+    stopPrice: stopPrice.toFixed(2),
+    lotSize,
+    positionSize: calculatePositionSize({
+      tradingCapital: risk.tradingCapital,
+      riskPerTradePercent: risk.riskPerTradePercent,
+      entryPrice,
+      stopPrice,
+      lotSize,
+    }),
+  };
+}
+
 export function DashboardShell({
   initialBacktestResult,
   initialMultiDayBacktestResult,
-  initialSnapshot,
 }: DashboardShellProps) {
-  const [step, setStep] = useState(0);
   const [selectedUnderlying, setSelectedUnderlying] = useState<SimulatedUnderlying["symbol"]>("NIFTY");
-
-  useEffect(() => {
-    const interval = window.setInterval(() => {
-      setStep((currentStep) => currentStep + 1);
-    }, 2000);
-
-    return () => window.clearInterval(interval);
-  }, []);
-
-  const snapshot = useMemo(
-    () => (step === 0 ? initialSnapshot : createSimulatedMarketSnapshot(step)),
-    [initialSnapshot, step],
-  );
-
-  const mode = getMarketDataModeLabel(snapshot.health.mode);
+  const [liveStatus, setLiveStatus] = useState<LiveKiteStreamSnapshot | null>(null);
+  const liveSnapshot = liveStatus?.marketSnapshot;
+  const mode = liveSnapshot
+    ? getMarketDataModeLabel(liveSnapshot.health.mode)
+    : {
+        label: "LIVE DATA WAITING",
+        description: "Connect Zerodha stream",
+        tone: "warning" as const,
+      };
   const risk = DEFAULT_RISK_CONFIGURATION;
-  const positionSize = useMemo(
-    () =>
-      calculatePositionSize({
-        tradingCapital: risk.tradingCapital,
-        riskPerTradePercent: risk.riskPerTradePercent,
-        entryPrice: "150",
-        stopPrice: "140",
-        lotSize: 75,
-      }),
-    [risk.riskPerTradePercent, risk.tradingCapital],
-  );
+  const liveRiskPlan = useMemo(() => buildLiveRiskPlan(liveSnapshot, risk), [liveSnapshot, risk]);
   const dailyLossLimit = calculateDailyLossLimit(
     risk.tradingCapital,
     risk.maximumDailyLossPercent,
@@ -522,31 +573,37 @@ export function DashboardShell({
           </div>
         </header>
 
-        <section className="grid gap-3 lg:grid-cols-3">
-          {snapshot.underlyings.map((underlying) => (
-            <MarketCard
-              key={underlying.symbol}
-              dataMode={snapshot.health.mode}
-              underlying={underlying}
-            />
-          ))}
-        </section>
+        {liveSnapshot ? (
+          <>
+            <section className="grid gap-3 lg:grid-cols-3">
+              {liveSnapshot.underlyings.map((underlying) => (
+                <MarketCard
+                  key={underlying.symbol}
+                  dataMode={liveSnapshot.health.mode}
+                  underlying={underlying}
+                />
+              ))}
+            </section>
 
-        <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-          <IndicatorContextPanel snapshot={snapshot} />
-          <OpportunityScanner snapshot={snapshot} />
-        </section>
+            <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
+              <IndicatorContextPanel snapshot={liveSnapshot} />
+              <OpportunityScanner snapshot={liveSnapshot} />
+            </section>
 
-        <ScannerExplanationPanel snapshot={snapshot} />
+            <ScannerExplanationPanel snapshot={liveSnapshot} />
 
-        <section className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
-          <OptionChainContextPanel context={snapshot.phase5} />
-          <OptionChain
-            snapshot={snapshot}
-            selectedUnderlying={selectedUnderlying}
-            onSelectUnderlying={setSelectedUnderlying}
-          />
-        </section>
+            <section className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
+              <OptionChainContextPanel context={liveSnapshot.phase5} />
+              <OptionChain
+                snapshot={liveSnapshot}
+                selectedUnderlying={selectedUnderlying}
+                onSelectUnderlying={setSelectedUnderlying}
+              />
+            </section>
+          </>
+        ) : (
+          <LiveDataWaitingPanel status={liveStatus} />
+        )}
 
         <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
           <BacktestSummaryPanel result={initialBacktestResult} />
@@ -561,17 +618,21 @@ export function DashboardShell({
         <section className="grid gap-4 xl:grid-cols-5">
           <RiskDashboard
             dailyLossLimit={dailyLossLimit}
-            positionSize={positionSize}
+            riskPlan={liveRiskPlan}
             risk={risk}
           />
-          <Phase2Pipeline snapshot={snapshot} />
-          <LiveConnectionPanel />
+          {liveSnapshot ? <Phase2Pipeline snapshot={liveSnapshot} /> : null}
+          <LiveConnectionPanel onStatusChange={setLiveStatus} />
           <HistoricalOptionIngestionPanel />
-          <SystemHealth snapshot={snapshot} />
+          {liveSnapshot ? <SystemHealth snapshot={liveSnapshot} /> : null}
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
-          <PaperTradeJournal snapshot={snapshot} />
+          {liveSnapshot ? (
+            <PaperTradeJournal snapshot={liveSnapshot} />
+          ) : (
+            <LivePaperJournalWaitingPanel status={liveStatus} />
+          )}
 
           <Card>
             <CardHeader>
@@ -584,13 +645,17 @@ export function DashboardShell({
             <CardContent className="grid gap-3">
               <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3">
                 <PauseCircle className="mt-0.5 h-5 w-5 text-muted-foreground" />
-                <div>
-                  <p className="font-semibold">No confirmed signal</p>
-                  <p className="text-sm text-muted-foreground">
-                    Current state: {snapshot.signal.state}. Paper entry remains disabled.
-                  </p>
-                </div>
+              <div>
+                <p className="font-semibold">
+                  {liveSnapshot ? "No confirmed signal" : "Waiting for live data"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {liveSnapshot
+                    ? `Current state: ${liveSnapshot.signal.state}. Paper entry remains disabled.`
+                    : "Signal history starts only after live Kite ticks are available."}
+                </p>
               </div>
+            </div>
               <Button disabled variant="secondary">
                 <CircleDollarSign className="h-4 w-4" />
                 Take Paper Trade
@@ -700,6 +765,62 @@ function ExplanationList({ label, items }: { label: string; items: string[] }) {
         ))}
       </ul>
     </div>
+  );
+}
+
+function LiveDataWaitingPanel({ status }: { status: LiveKiteStreamSnapshot | null }) {
+  const connected = Boolean(status?.provider.connected);
+  const marketOpen = Boolean(status?.marketSession.open);
+  const tickMessage = status?.freshness.message ?? "No live tick has reached the dashboard yet.";
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <Radio className="h-5 w-5 text-primary" />
+              Live Market Data
+            </CardTitle>
+            <CardDescription>{tickMessage}</CardDescription>
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={marketOpen ? "success" : "warning"}>
+              {marketOpen ? "Market open" : "Market closed"}
+            </Badge>
+            <Badge variant={connected ? "success" : "warning"}>
+              {connected ? "Stream connected" : "Stream waiting"}
+            </Badge>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-3">
+        <Metric label="Instruments" value={formatNumber(status?.instrumentMasterCount ?? 0)} />
+        <Metric label="Subscribed" value={formatNumber(status?.provider.subscriptionCount ?? 0)} />
+        <Metric label="Tracked" value={formatNumber(status?.marketState.instrumentsTracked ?? 0)} />
+      </CardContent>
+    </Card>
+  );
+}
+
+function LivePaperJournalWaitingPanel({ status }: { status: LiveKiteStreamSnapshot | null }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <BookOpenText className="h-5 w-5 text-accent" />
+          Paper Trade Journal
+        </CardTitle>
+        <CardDescription>
+          {status?.freshness.message ?? "Waiting for fresh live ticks."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-md border bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
+          Paper entries are paused until the live market snapshot is ready.
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -1669,16 +1790,28 @@ function streamSafetyVariant(status: LiveKiteStreamSnapshot["safetyChecks"][numb
   return "warning" as const;
 }
 
-function LiveConnectionPanel() {
+function LiveConnectionPanel({
+  onStatusChange,
+}: {
+  onStatusChange?: (status: LiveKiteStreamSnapshot) => void;
+}) {
   const [status, setStatus] = useState<LiveKiteStreamSnapshot | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
+  const applyStatus = useCallback(
+    (nextStatus: LiveKiteStreamSnapshot) => {
+      setStatus(nextStatus);
+      onStatusChange?.(nextStatus);
+    },
+    [onStatusChange],
+  );
+
   const loadStatus = useCallback(async () => {
     const response = await fetch("/api/kite/stream", { cache: "no-store" });
     const data = (await response.json()) as LiveKiteStreamSnapshot;
-    setStatus(data);
-  }, []);
+    applyStatus(data);
+  }, [applyStatus]);
 
   async function runAction(action: "start" | "stop") {
     setBusy(true);
@@ -1696,12 +1829,14 @@ function LiveConnectionPanel() {
       };
 
       if (!response.ok) {
-        setStatus(data.snapshot ?? null);
+        if (data.snapshot) {
+          applyStatus(data.snapshot);
+        }
         setMessage(data.message ?? "Kite stream action failed.");
         return;
       }
 
-      setStatus(data);
+      applyStatus(data);
     } catch {
       setMessage("Could not reach the local Kite stream service.");
     } finally {
@@ -1836,13 +1971,13 @@ function Phase2Pipeline({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
           Data Pipeline
         </CardTitle>
         <CardDescription>
-          {snapshot.phase2.selectedUnderlying} {snapshot.phase2.selectedExpiry}
+          {snapshot.phase2.selectedUnderlying} {snapshot.phase2.selectedExpiry || "live expiry pending"}
         </CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="grid grid-cols-2 gap-2 text-sm">
           <Metric label="Instruments" value={formatNumber(snapshot.phase2.instrumentMasterCount)} />
-          <Metric label="ATM strike" value={formatNumber(Number(snapshot.phase2.atmStrike))} />
+          <Metric label="ATM strike" value={formatNumericString(snapshot.phase2.atmStrike)} />
           <Metric label="Option universe" value={formatNumber(snapshot.phase2.optionUniverseCount)} />
           <Metric label="State tracked" value={formatNumber(snapshot.phase2.trackedInstruments)} />
         </div>
@@ -1907,7 +2042,7 @@ function MarketCard({
           </div>
           <div className="flex flex-wrap justify-end gap-2">
             <Badge variant={isLive ? "success" : "warning"}>
-              {isLive ? "Live" : "Replay sample"}
+              {isLive ? "Live" : "Waiting"}
             </Badge>
             <Badge variant={regimeVariant(underlying.regime)}>{underlying.regime.replace("_", " ")}</Badge>
           </div>
@@ -1917,37 +2052,45 @@ function MarketCard({
         <div className="flex items-end justify-between gap-3">
           <div>
             <p className="text-xs font-medium uppercase text-muted-foreground">
-              {isLive ? "LTP" : "Sample LTP"}
+              LTP
             </p>
-            <p className="text-2xl font-semibold tabular-nums">{formatNumber(underlying.lastPrice)}</p>
+            <p className="text-2xl font-semibold tabular-nums">
+              {formatOptionalNumber(underlying.lastPrice)}
+            </p>
           </div>
           <div className="text-right text-sm">
             <p className="font-semibold text-emerald-700 dark:text-emerald-300">
-              {formatSigned(underlying.change)}
+              {formatOptionalSigned(underlying.change)}
             </p>
             <p className="text-muted-foreground">
-              {formatSigned(underlying.changePercent, "%")}
+              {formatOptionalSigned(underlying.changePercent, "%")}
             </p>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-sm">
-          <Metric label="VWAP" value={formatNumber(underlying.vwap)} />
-          <Metric label="VWAP distance" value={formatSigned(underlying.vwapDistance)} />
+          <Metric label="VWAP" value={formatOptionalNumber(underlying.vwap)} />
+          <Metric label="VWAP distance" value={formatOptionalSigned(underlying.vwapDistance)} />
           <Metric label="Trend" value={underlying.trend} />
-          <Metric label="Rel volume" value={`${underlying.volumeRelative}x`} />
-          <Metric label="OI" value={formatNumber(underlying.openInterest)} />
-          <Metric label="OI change" value={formatSigned(underlying.oiChange)} />
+          <Metric label="Rel volume" value={formatOptionalRatio(underlying.volumeRelative)} />
+          <Metric label="OI" value={formatOptionalNumber(underlying.openInterest)} />
+          <Metric label="OI change" value={formatOptionalSigned(underlying.oiChange)} />
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-sm">
-          <Metric label="Support" value={formatNumber(underlying.support)} />
-          <Metric label="Resistance" value={formatNumber(underlying.resistance)} />
+          <Metric
+            label={isLive ? "Day low" : "Support"}
+            value={formatOptionalNumber(underlying.support)}
+          />
+          <Metric
+            label={isLive ? "Day high" : "Resistance"}
+            value={formatOptionalNumber(underlying.resistance)}
+          />
         </div>
 
         <Badge variant={dataQualityVariant(underlying.dataQuality)} className="w-fit">
           <Activity className="h-3.5 w-3.5" />
-          {isLive ? "Data quality" : "Sample quality"}: {underlying.dataQuality.replace("_", " ")}
+          Data quality: {underlying.dataQuality.replace("_", " ")}
         </Badge>
       </CardContent>
     </Card>
@@ -2107,7 +2250,9 @@ function OptionChain({
               <BarChart3 className="h-5 w-5 text-primary" />
               Option Chain
             </CardTitle>
-            <CardDescription>Nearest expiry simulation</CardDescription>
+            <CardDescription>
+              {snapshot.health.mode === "live" ? "Nearest live expiry from Kite" : "Waiting for live expiry"}
+            </CardDescription>
           </div>
           <div className="flex rounded-md border bg-muted/35 p-1">
             {snapshot.underlyings.map((underlying) => (
@@ -2137,7 +2282,8 @@ function OptionChain({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {snapshot.optionChain.map((row) => {
+            {snapshot.optionChain.length ? (
+              snapshot.optionChain.map((row) => {
               const contextRow = liquidityByStrike.get(row.strike);
               const callStatus = contextRow?.call.status ?? "NOT_TRADABLE";
               const putStatus = contextRow?.put.status ?? "NOT_TRADABLE";
@@ -2177,7 +2323,14 @@ function OptionChain({
                   </TableCell>
                 </TableRow>
               );
-            })}
+              })
+            ) : (
+              <TableRow>
+                <TableCell colSpan={6} className="text-center text-muted-foreground">
+                  Waiting for live option ticks.
+                </TableCell>
+              </TableRow>
+            )}
           </TableBody>
         </Table>
       </CardContent>
@@ -2187,13 +2340,20 @@ function OptionChain({
 
 function RiskDashboard({
   dailyLossLimit,
-  positionSize,
+  riskPlan,
   risk,
 }: {
   dailyLossLimit: string;
-  positionSize: ReturnType<typeof calculatePositionSize>;
+  riskPlan: LiveRiskPlan | null;
   risk: typeof DEFAULT_RISK_CONFIGURATION;
 }) {
+  const perTradeRisk = (Number(risk.tradingCapital) * Number(risk.riskPerTradePercent)) / 100;
+  const sizeAllowed = Boolean(riskPlan?.positionSize.canTrade && riskPlan.contractStatus === "TRADABLE");
+  const positionMessage =
+    riskPlan?.contractStatus === "NOT_TRADABLE"
+      ? riskPlan.contractReason
+      : riskPlan?.positionSize.reason;
+
   return (
     <Card>
       <CardHeader>
@@ -2201,7 +2361,7 @@ function RiskDashboard({
           <ShieldAlert className="h-5 w-5 text-destructive" />
           Risk Dashboard
         </CardTitle>
-        <CardDescription>Daily lock and position sizing</CardDescription>
+        <CardDescription>Daily lock and live option sizing</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="grid grid-cols-2 gap-2 text-sm">
@@ -2214,19 +2374,36 @@ function RiskDashboard({
         <div className="rounded-md border bg-muted/40 p-3">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-semibold">Position size check</p>
-              <p className="text-sm text-muted-foreground">Entry 150, stop 140, lot size 75</p>
+              <p className="font-semibold">Live position size</p>
+              <p className="break-words text-sm text-muted-foreground">
+                {riskPlan ? riskPlan.contractLabel : "Waiting for a live selected option."}
+              </p>
             </div>
-            <Badge variant={positionSize.canTrade ? "success" : "muted"}>
-              {positionSize.canTrade ? "TRADE ALLOWED" : "NO TRADE"}
+            <Badge variant={sizeAllowed ? "success" : "muted"}>
+              {riskPlan ? (sizeAllowed ? "SIZE OK" : "NO TRADE") : "WAITING"}
             </Badge>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-            <Metric label="Maximum risk" value={formatInr(positionSize.maximumRisk)} />
-            <Metric label="Quantity" value={String(positionSize.quantity)} />
+            {riskPlan ? (
+              <>
+                <Metric label="Entry" value={formatInr(riskPlan.entryPrice)} />
+                <Metric label="Stop" value={formatInr(riskPlan.stopPrice)} />
+                <Metric label="Lot size" value={String(riskPlan.lotSize)} />
+              </>
+            ) : null}
+            <Metric
+              label="Maximum risk"
+              value={formatInr(riskPlan?.positionSize.maximumRisk ?? perTradeRisk)}
+            />
+            <Metric label="Quantity" value={riskPlan ? String(riskPlan.positionSize.quantity) : "Pending"} />
           </div>
-          {positionSize.reason ? (
-            <p className="mt-3 text-sm font-medium text-muted-foreground">{positionSize.reason}</p>
+          {positionMessage ? (
+            <p className="mt-3 text-sm font-medium text-muted-foreground">{positionMessage}</p>
+          ) : null}
+          {!riskPlan ? (
+            <p className="mt-3 text-sm font-medium text-muted-foreground">
+              Live option LTP and lot size are required before sizing is shown.
+            </p>
           ) : null}
         </div>
       </CardContent>
@@ -2247,7 +2424,7 @@ function HistoricalOptionIngestionPanel() {
               <CandlestickChart className="h-5 w-5 text-primary" />
               Option History
             </CardTitle>
-            <CardDescription>Kite F&O candles for replay</CardDescription>
+            <CardDescription>Kite F&O candles for review runs</CardDescription>
           </div>
           <Badge variant="success">Phase 10</Badge>
         </div>
@@ -2263,8 +2440,8 @@ function HistoricalOptionIngestionPanel() {
         <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
           <History className="mt-0.5 h-5 w-5 text-accent" />
           <div>
-            <p className="font-semibold">Real option candles ready</p>
-            <p className="text-muted-foreground">Bid/ask remains an explicit replay assumption.</p>
+            <p className="font-semibold">Historical option candles ready</p>
+            <p className="text-muted-foreground">Kept separate from live stream prices.</p>
           </div>
         </div>
       </CardContent>
