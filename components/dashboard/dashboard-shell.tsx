@@ -2254,14 +2254,14 @@ function HistoricalOptionIngestionPanel() {
 
 function SystemHealth({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   const rows = [
-    ["WebSocket", snapshot.health.websocket],
+    ["WebSocket", formatHealthValue(snapshot.health.websocket)],
     ["Last tick", `${snapshot.health.lastTickSecondsAgo}s ago`],
     ["Subscriptions", String(snapshot.health.subscriptions)],
     ["Rejected", String(snapshot.health.rejectedSubscriptions)],
-    ["Data quality", snapshot.health.dataQuality],
-    ["Signal engine", snapshot.health.signalEngine],
-    ["Database", snapshot.health.database],
-    ["Mode", snapshot.health.mode.toUpperCase()],
+    ["Data quality", formatHealthValue(snapshot.health.dataQuality)],
+    ["Signal engine", formatHealthValue(snapshot.health.signalEngine)],
+    ["Database", formatHealthValue(snapshot.health.database)],
+    ["Mode", formatHealthValue(snapshot.health.mode)],
   ];
 
   return (
@@ -2278,9 +2278,16 @@ function SystemHealth({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
       <CardContent className="grid gap-3">
         <div className="grid gap-2 sm:grid-cols-2">
           {rows.map(([label, value]) => (
-            <div key={label} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm">
-              <span className="text-muted-foreground">{label}</span>
-              <span className="font-semibold tabular-nums">{value.replace("_", " ")}</span>
+            <div
+              key={label}
+              className="min-h-[72px] rounded-md border bg-muted/35 px-3 py-2.5 text-sm"
+            >
+              <p className="text-xs font-medium uppercase leading-snug text-muted-foreground">
+                {label}
+              </p>
+              <p className="mt-1 break-words text-sm font-semibold leading-snug tabular-nums">
+                {value}
+              </p>
             </div>
           ))}
         </div>
@@ -2301,4 +2308,11 @@ function SystemHealth({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
       </CardContent>
     </Card>
   );
+}
+
+function formatHealthValue(value: string) {
+  return value
+    .replace(/_/g, " ")
+    .toLowerCase()
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
