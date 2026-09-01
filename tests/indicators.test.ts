@@ -137,4 +137,39 @@ describe("indicator core", () => {
       emaTrend: "Bullish",
     });
   });
+
+  it("uses warm-up candles for early-session EMA, ATR, RSI, and volume context", () => {
+    const warmupCandles = Array.from({ length: 60 }, (_, index) =>
+      candle(index, {
+        high: String(101 + index * 0.3),
+        low: String(99 + index * 0.3),
+        close: String(100 + index * 0.3),
+        volume: 1000 + index * 10,
+      }),
+    );
+    const sessionCandles = Array.from({ length: 4 }, (_, index) =>
+      candle(index + 60, {
+        high: String(120 + index),
+        low: String(118 + index),
+        close: String(119 + index),
+        volume: 2500 + index * 100,
+      }),
+    );
+    const context = buildIndicatorContext({
+      underlying: "NIFTY",
+      candles: sessionCandles,
+      warmupCandles,
+      previousDay: { high: "122", low: "110", close: "118" },
+    });
+
+    expect(context.candleCount).toBe(4);
+    expect(context.warmupCandleCount).toBe(60);
+    expect(context.vwap).not.toBeNull();
+    expect(context.ema9).not.toBeNull();
+    expect(context.ema20).not.toBeNull();
+    expect(context.ema50).not.toBeNull();
+    expect(context.atr14).not.toBeNull();
+    expect(context.rsi14).not.toBeNull();
+    expect(context.volumeAverage20).not.toBeNull();
+  });
 });

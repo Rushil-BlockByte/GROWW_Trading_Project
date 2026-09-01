@@ -80,11 +80,13 @@ export type SimulatedMarketSnapshot = {
   generatedAt: string;
   underlyings: SimulatedUnderlying[];
   optionChain: SimulatedOptionRow[];
+  optionChains?: Partial<Record<UnderlyingSymbol, SimulatedOptionRow[]>>;
   signal: SimulatedSignal;
   health: SimulatedSystemHealth;
   phase2: SimulatedPhase2Pipeline;
   phase4: IndicatorContext;
   phase5: OptionChainContext;
+  phase5ByUnderlying?: Partial<Record<UnderlyingSymbol, OptionChainContext>>;
   phase6: StrategyEvaluation;
 };
 

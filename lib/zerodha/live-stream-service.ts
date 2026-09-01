@@ -4,10 +4,12 @@ import { InstrumentRepository } from "@/lib/instruments/instrument-repository";
 import { CandleBuilder } from "@/lib/market/candle-builder";
 import { MarketStateStore } from "@/lib/market/market-state";
 import { ZerodhaMarketDataProvider } from "@/lib/providers/zerodha-market-data-provider";
+import { fetchKiteHistoricalCandles } from "@/lib/zerodha/historical-data-client";
 import { downloadKiteInstruments } from "@/lib/zerodha/instruments-client";
 import {
   buildLiveMarketSnapshot,
-  type LiveOptionUniverseSnapshot,
+  type LiveIndicatorPreviousDay,
+  type LiveOptionUniversesSnapshot,
 } from "@/lib/zerodha/live-market-snapshot";
 import {
   buildLiveStreamSafetySnapshot,
@@ -17,12 +19,13 @@ import {
   type LiveStreamSafetyCheck,
 } from "@/lib/zerodha/live-stream-safety";
 import { resolveInitialLiveUniverse } from "@/lib/zerodha/live-universe";
+import type { IndicatorCandle } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
 import type { MarketTick, UnderlyingSymbol } from "@/types/market";
 import type { SimulatedMarketSnapshot } from "@/types/simulation";
-import { DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW } from "@/lib/zerodha/option-historical-config";
 
-const LIVE_OPTION_UNDERLYING: UnderlyingSymbol = "NIFTY";
+const LIVE_OPTION_STRIKE_WINDOW = 5;
+const INDICATOR_WARMUP_DAYS = 7;
 
 export type LiveKiteStreamSnapshot = {
   configured: {
@@ -64,8 +67,11 @@ export class LiveKiteStreamService {
   private instruments: InstrumentRecord[] = [];
   private subscribedInstruments: InstrumentRecord[] = [];
   private unresolvedUnderlyings: string[] = [];
-  private liveOptionUniverse?: LiveOptionUniverseSnapshot;
-  private optionSubscriptionPending = false;
+  private liveOptionUniverses: LiveOptionUniversesSnapshot = {};
+  private optionSubscriptionPending = new Set<UnderlyingSymbol>();
+  private sessionCandlesByToken = new Map<number, IndicatorCandle[]>();
+  private warmupCandlesByToken = new Map<number, IndicatorCandle[]>();
+  private previousDayByToken = new Map<number, LiveIndicatorPreviousDay>();
   private startedAt?: Date;
   private lastError?: string;
 
@@ -106,16 +112,25 @@ export class LiveKiteStreamService {
     const liveUniverse = resolveInitialLiveUniverse(this.repository);
     this.subscribedInstruments = liveUniverse.instruments;
     this.unresolvedUnderlyings = liveUniverse.unresolved;
+    this.liveOptionUniverses = {};
+    this.optionSubscriptionPending = new Set();
+    this.sessionCandlesByToken = new Map();
+    this.warmupCandlesByToken = new Map();
+    this.previousDayByToken = new Map();
 
     if (liveUniverse.subscriptions.length === 0) {
       this.lastError = "No index instruments resolved from Zerodha instrument master.";
       throw new Error(this.lastError);
     }
 
+    await this.warmIndicatorHistory({
+      apiKey: config.kiteApiKey,
+      accessToken: config.kiteAccessToken,
+      instruments: liveUniverse.instruments,
+    });
+
     this.stateStore = new MarketStateStore(this.repository);
     this.candleBuilder = new CandleBuilder(["1m", "5m", "15m"]);
-    this.liveOptionUniverse = undefined;
-    this.optionSubscriptionPending = false;
     this.provider = new ZerodhaMarketDataProvider({
       apiKey: config.kiteApiKey,
       accessToken: config.kiteAccessToken,
@@ -143,6 +158,58 @@ export class LiveKiteStreamService {
     this.startedAt = undefined;
 
     return this.getSnapshot();
+  }
+
+  private async warmIndicatorHistory({
+    apiKey,
+    accessToken,
+    instruments,
+  }: {
+    apiKey: string;
+    accessToken: string;
+    instruments: InstrumentRecord[];
+  }) {
+    const now = new Date();
+    const sessionDate = kolkataDate(now);
+    const fromDate = kolkataDate(addDays(now, -INDICATOR_WARMUP_DAYS));
+    const sessionStart = kolkataSessionStartTime(sessionDate);
+    const from = `${fromDate} 09:15:00`;
+    const to = kiteDateTime(now);
+
+    await Promise.all(
+      instruments.map(async (instrument) => {
+        try {
+          const historical = await fetchKiteHistoricalCandles({
+            apiKey,
+            accessToken,
+            instrumentToken: instrument.instrumentToken,
+            interval: "minute",
+            from,
+            to,
+            continuous: false,
+            includeOpenInterest: false,
+          });
+          const candles = historical.candles.map(indicatorCandleFromHistorical);
+          const sessionCandles = candles.filter(
+            (candle) => new Date(candle.startTime).getTime() >= sessionStart,
+          );
+          const warmupCandles = candles
+            .filter((candle) => new Date(candle.startTime).getTime() < sessionStart)
+            .slice(-120);
+          const previousDay = previousDayFromCandles(warmupCandles, sessionDate);
+
+          this.sessionCandlesByToken.set(instrument.instrumentToken, sessionCandles);
+          this.warmupCandlesByToken.set(instrument.instrumentToken, warmupCandles);
+
+          if (previousDay) {
+            this.previousDayByToken.set(instrument.instrumentToken, previousDay);
+          }
+        } catch {
+          this.sessionCandlesByToken.set(instrument.instrumentToken, []);
+          this.warmupCandlesByToken.set(instrument.instrumentToken, []);
+        }
+      }),
+    );
   }
 
   getSnapshot(): LiveKiteStreamSnapshot {
@@ -190,9 +257,12 @@ export class LiveKiteStreamService {
       repository: this.repository,
       stateStore: this.stateStore,
       candleBuilder: this.candleBuilder,
+      sessionCandlesByToken: this.sessionCandlesByToken,
+      warmupCandlesByToken: this.warmupCandlesByToken,
+      previousDayByToken: this.previousDayByToken,
       provider: providerStatus,
       instrumentMasterCount: this.instruments.length,
-      optionUniverse: this.liveOptionUniverse,
+      optionUniverses: this.liveOptionUniverses,
     });
 
     return {
@@ -229,32 +299,31 @@ export class LiveKiteStreamService {
   }
 
   private async maybeSubscribeOptionUniverse(tick: MarketTick) {
-    if (
-      !this.repository ||
-      !this.provider ||
-      this.liveOptionUniverse ||
-      this.optionSubscriptionPending
-    ) {
+    if (!this.repository || !this.provider) {
       return;
     }
 
     const instrument = this.repository.findByToken(tick.instrumentToken);
+    const underlying = instrument?.underlyingSymbol;
 
     if (
       instrument?.kind !== "INDEX" ||
-      instrument.underlyingSymbol !== LIVE_OPTION_UNDERLYING
+      !underlying ||
+      underlying === "INDIA_VIX" ||
+      this.liveOptionUniverses[underlying] ||
+      this.optionSubscriptionPending.has(underlying)
     ) {
       return;
     }
 
     const config = DEFAULT_UNDERLYINGS.find(
-      (underlying) => underlying.symbol === LIVE_OPTION_UNDERLYING,
+      (candidate) => candidate.symbol === underlying,
     );
-    const expiry = this.repository.getNearestExpiry(LIVE_OPTION_UNDERLYING, new Date(tick.timestamp));
+    const expiry = this.repository.getNearestExpiry(underlying, new Date(tick.timestamp));
 
     if (!config || !expiry) {
-      this.liveOptionUniverse = {
-        selectedUnderlying: LIVE_OPTION_UNDERLYING,
+      this.liveOptionUniverses[underlying] = {
+        selectedUnderlying: underlying,
         expiry: expiry ?? "",
         atmStrike: "",
         instruments: [],
@@ -263,19 +332,19 @@ export class LiveKiteStreamService {
       return;
     }
 
-    this.optionSubscriptionPending = true;
+    this.optionSubscriptionPending.add(underlying);
 
     try {
       const universe = this.repository.buildAtmOptionUniverse({
-        underlyingSymbol: LIVE_OPTION_UNDERLYING,
+        underlyingSymbol: underlying,
         underlyingLastPrice: tick.lastPrice,
         expiry,
         strikeInterval: config.strikeInterval,
-        strikeWindow: DEFAULT_HISTORICAL_OPTION_STRIKE_WINDOW,
+        strikeWindow: LIVE_OPTION_STRIKE_WINDOW,
       });
 
-      this.liveOptionUniverse = {
-        selectedUnderlying: LIVE_OPTION_UNDERLYING,
+      this.liveOptionUniverses[underlying] = {
+        selectedUnderlying: underlying,
         expiry: universe.expiry,
         atmStrike: universe.atmStrike,
         instruments: universe.instruments,
@@ -295,9 +364,91 @@ export class LiveKiteStreamService {
         ]);
       }
     } finally {
-      this.optionSubscriptionPending = false;
+      this.optionSubscriptionPending.delete(underlying);
     }
   }
+}
+
+function indicatorCandleFromHistorical(candle: IndicatorCandle): IndicatorCandle {
+  return {
+    startTime: candle.startTime,
+    open: candle.open,
+    high: candle.high,
+    low: candle.low,
+    close: candle.close,
+    volume: candle.volume,
+    openInterest: candle.openInterest,
+  };
+}
+
+function previousDayFromCandles(
+  candles: IndicatorCandle[],
+  sessionDate: string,
+): LiveIndicatorPreviousDay | null {
+  const candlesByDate = new Map<string, IndicatorCandle[]>();
+
+  for (const candle of candles) {
+    const date = kolkataDate(new Date(candle.startTime));
+
+    if (date >= sessionDate) continue;
+
+    const group = candlesByDate.get(date) ?? [];
+    group.push(candle);
+    candlesByDate.set(date, group);
+  }
+
+  const previousDate = Array.from(candlesByDate.keys()).sort().at(-1);
+
+  if (!previousDate) return null;
+
+  const previousCandles = [...(candlesByDate.get(previousDate) ?? [])].sort(
+    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+  );
+  const last = previousCandles.at(-1);
+
+  if (!last) return null;
+
+  return {
+    high: Math.max(...previousCandles.map((candle) => Number(candle.high))).toFixed(2),
+    low: Math.min(...previousCandles.map((candle) => Number(candle.low))).toFixed(2),
+    close: Number(last.close).toFixed(2),
+  };
+}
+
+function kolkataDate(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+  }).format(date);
+}
+
+function kiteDateTime(date: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    day: "2-digit",
+    hour: "2-digit",
+    hour12: false,
+    minute: "2-digit",
+    month: "2-digit",
+    second: "2-digit",
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+  }).formatToParts(date);
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value.padStart(2, "0") ?? "00";
+
+  return `${value("year")}-${value("month")}-${value("day")} ${value("hour")}:${value(
+    "minute",
+  )}:${value("second")}`;
+}
+
+function kolkataSessionStartTime(date: string) {
+  return new Date(`${date}T09:15:00.000+05:30`).getTime();
+}
+
+function addDays(date: Date, days: number) {
+  return new Date(date.getTime() + days * 86_400_000);
 }
 
 function dedupeInstruments(instruments: InstrumentRecord[]) {

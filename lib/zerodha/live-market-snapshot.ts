@@ -19,6 +19,12 @@ import type {
 
 const LIVE_SELECTED_UNDERLYING: UnderlyingSymbol = "NIFTY";
 
+export type LiveIndicatorPreviousDay = {
+  high: Decimal.Value;
+  low: Decimal.Value;
+  close: Decimal.Value;
+};
+
 export type LiveOptionUniverseSnapshot = {
   selectedUnderlying: UnderlyingSymbol;
   expiry: string;
@@ -27,6 +33,8 @@ export type LiveOptionUniverseSnapshot = {
   missingContracts: number;
 };
 
+export type LiveOptionUniversesSnapshot = Partial<Record<UnderlyingSymbol, LiveOptionUniverseSnapshot>>;
+
 export type LiveMarketSnapshotInput = {
   repository?: InstrumentRepository;
   stateStore?: MarketStateStore;
@@ -34,9 +42,13 @@ export type LiveMarketSnapshotInput = {
     getActiveCandles(): MarketCandleData[];
     getCompletedCandles(): MarketCandleData[];
   };
+  sessionCandlesByToken?: ReadonlyMap<number, IndicatorCandle[]>;
+  warmupCandlesByToken?: ReadonlyMap<number, IndicatorCandle[]>;
+  previousDayByToken?: ReadonlyMap<number, LiveIndicatorPreviousDay>;
   provider: MarketDataProviderStatus;
   instrumentMasterCount: number;
   optionUniverse?: LiveOptionUniverseSnapshot;
+  optionUniverses?: LiveOptionUniversesSnapshot;
   generatedAt?: Date;
 };
 
@@ -44,9 +56,13 @@ export function buildLiveMarketSnapshot({
   repository,
   stateStore,
   candleBuilder,
+  sessionCandlesByToken,
+  warmupCandlesByToken,
+  previousDayByToken,
   provider,
   instrumentMasterCount,
   optionUniverse,
+  optionUniverses,
   generatedAt = new Date(),
 }: LiveMarketSnapshotInput): SimulatedMarketSnapshot | undefined {
   if (!repository || !stateStore || provider.connected === false) {
@@ -69,23 +85,43 @@ export function buildLiveMarketSnapshot({
     return undefined;
   }
 
+  const liveOptionUniverses =
+    optionUniverses ??
+    (optionUniverse
+      ? {
+          [optionUniverse.selectedUnderlying]: optionUniverse,
+        }
+      : {});
+  const optionChains = buildLiveOptionChainsByUnderlying({
+    optionUniverses: liveOptionUniverses,
+    stateStore,
+  });
+  const phase5ByUnderlying = buildLiveOptionContextByUnderlying({
+    optionChains,
+    optionUniverses: liveOptionUniverses,
+    repository,
+    stateStore,
+  });
+  const optionChain = optionChains[LIVE_SELECTED_UNDERLYING] ?? [];
+  const phase5 =
+    phase5ByUnderlying[LIVE_SELECTED_UNDERLYING] ??
+    buildOptionChainContext({
+      underlying: LIVE_SELECTED_UNDERLYING,
+      underlyingLastPrice: niftyState.state.latestTick.lastPrice,
+      expiry: liveOptionUniverses[LIVE_SELECTED_UNDERLYING]?.expiry ?? "",
+      rows: optionChain,
+    });
   const phase4 = buildIndicatorContext({
     underlying: LIVE_SELECTED_UNDERLYING,
     candles: liveIndicatorCandles({
       candleBuilder,
       instrumentToken: niftyState.instrument.instrumentToken,
+      sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
     }),
-    previousDay: previousDayFromTick(niftyState.state.latestTick),
-  });
-  const optionChain = buildLiveOptionChainRows({
-    optionUniverse,
-    stateStore,
-  });
-  const phase5 = buildOptionChainContext({
-    underlying: LIVE_SELECTED_UNDERLYING,
-    underlyingLastPrice: niftyState.state.latestTick.lastPrice,
-    expiry: optionUniverse?.expiry ?? "",
-    rows: optionChain,
+    warmupCandles: warmupCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
+    previousDay:
+      previousDayByToken?.get(niftyState.instrument.instrumentToken) ??
+      previousDayFromTick(niftyState.state.latestTick),
   });
   const phase6 = evaluateVwapBreakoutStrategy({
     indicator: phase4,
@@ -98,6 +134,7 @@ export function buildLiveMarketSnapshot({
     generatedAt: generatedAt.toISOString(),
     underlyings,
     optionChain,
+    optionChains,
     signal: {
       id: phase6.id,
       underlying: phase6.underlying,
@@ -137,10 +174,10 @@ export function buildLiveMarketSnapshot({
     phase2: {
       instrumentMasterCount,
       selectedUnderlying: LIVE_SELECTED_UNDERLYING,
-      selectedExpiry: optionUniverse?.expiry ?? "",
-      atmStrike: optionUniverse?.atmStrike ?? "",
-      optionUniverseCount: optionUniverse?.instruments.length ?? 0,
-      missingContracts: optionUniverse?.missingContracts ?? 0,
+      selectedExpiry: liveOptionUniverses[LIVE_SELECTED_UNDERLYING]?.expiry ?? "",
+      atmStrike: liveOptionUniverses[LIVE_SELECTED_UNDERLYING]?.atmStrike ?? "",
+      optionUniverseCount: optionUniverseCount(liveOptionUniverses),
+      missingContracts: missingContractCount(liveOptionUniverses),
       subscriptionCount: provider.subscriptionCount,
       rejectedSubscriptions: provider.rejectedSubscriptions,
       trackedInstruments: stateSummary.instrumentsTracked,
@@ -156,6 +193,7 @@ export function buildLiveMarketSnapshot({
     },
     phase4,
     phase5,
+    phase5ByUnderlying,
     phase6,
   };
 }
@@ -254,11 +292,21 @@ function liveUnderlyingFromState({
 function liveIndicatorCandles({
   candleBuilder,
   instrumentToken,
+  sessionCandles = [],
 }: {
   candleBuilder: LiveMarketSnapshotInput["candleBuilder"];
   instrumentToken: number;
+  sessionCandles?: IndicatorCandle[];
 }): IndicatorCandle[] {
   const candles = [
+    ...sessionCandles.map((candle) => ({
+      instrumentToken,
+      interval: "1m" as const,
+      endTime: candle.startTime,
+      isComplete: true,
+      tickCount: 0,
+      ...candle,
+    })),
     ...(candleBuilder?.getCompletedCandles() ?? []),
     ...(candleBuilder?.getActiveCandles() ?? []),
   ];
@@ -275,6 +323,74 @@ function liveIndicatorCandles({
       volume: candle.volume,
       openInterest: candle.openInterest,
     }));
+}
+
+function buildLiveOptionChainsByUnderlying({
+  optionUniverses,
+  stateStore,
+}: {
+  optionUniverses: LiveOptionUniversesSnapshot;
+  stateStore: MarketStateStore;
+}) {
+  return DEFAULT_UNDERLYINGS.reduce<Partial<Record<UnderlyingSymbol, SimulatedOptionRow[]>>>(
+    (chains, underlying) => {
+      chains[underlying.symbol] = buildLiveOptionChainRows({
+        optionUniverse: optionUniverses[underlying.symbol],
+        stateStore,
+      });
+
+      return chains;
+    },
+    {},
+  );
+}
+
+function buildLiveOptionContextByUnderlying({
+  optionChains,
+  optionUniverses,
+  repository,
+  stateStore,
+}: {
+  optionChains: Partial<Record<UnderlyingSymbol, SimulatedOptionRow[]>>;
+  optionUniverses: LiveOptionUniversesSnapshot;
+  repository: InstrumentRepository;
+  stateStore: MarketStateStore;
+}) {
+  return DEFAULT_UNDERLYINGS.reduce<Partial<Record<UnderlyingSymbol, ReturnType<typeof buildOptionChainContext>>>>(
+    (contexts, underlying) => {
+      const match = findUnderlyingState({
+        repository,
+        stateStore,
+        symbol: underlying.symbol,
+      });
+
+      if (!match) return contexts;
+
+      contexts[underlying.symbol] = buildOptionChainContext({
+        underlying: underlying.symbol,
+        underlyingLastPrice: match.state.latestTick.lastPrice,
+        expiry: optionUniverses[underlying.symbol]?.expiry ?? "",
+        rows: optionChains[underlying.symbol] ?? [],
+      });
+
+      return contexts;
+    },
+    {},
+  );
+}
+
+function optionUniverseCount(optionUniverses: LiveOptionUniversesSnapshot) {
+  return Object.values(optionUniverses).reduce(
+    (count, universe) => count + (universe?.instruments.length ?? 0),
+    0,
+  );
+}
+
+function missingContractCount(optionUniverses: LiveOptionUniversesSnapshot) {
+  return Object.values(optionUniverses).reduce(
+    (count, universe) => count + (universe?.missingContracts ?? 0),
+    0,
+  );
 }
 
 function previousDayFromTick(tick: MarketTick) {

@@ -33,6 +33,7 @@ export type PriceLevel = {
 export type IndicatorContext = {
   underlying: UnderlyingSymbol;
   candleCount: number;
+  warmupCandleCount?: number;
   latestClose: string;
   vwap: string | null;
   vwapDistance: string | null;

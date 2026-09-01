@@ -25,6 +25,16 @@ function sortCandles(candles: IndicatorCandle[]) {
   );
 }
 
+function dedupeSortedCandles(candles: IndicatorCandle[]) {
+  const byStartTime = new Map<string, IndicatorCandle>();
+
+  for (const candle of candles) {
+    byStartTime.set(candle.startTime, candle);
+  }
+
+  return sortCandles(Array.from(byStartTime.values()));
+}
+
 export function calculateSessionVwap(candles: IndicatorCandle[]): IndicatorPoint[] {
   const sorted = sortCandles(candles);
   let cumulativePriceVolume = new Decimal(0);
@@ -370,19 +380,23 @@ export function classifyEmaTrend(ema9: string | null, ema20: string | null, ema5
 export function buildIndicatorContext({
   underlying,
   candles,
+  warmupCandles = [],
   previousDay,
 }: {
   underlying: IndicatorContext["underlying"];
   candles: IndicatorCandle[];
+  warmupCandles?: IndicatorCandle[];
   previousDay: { high: Decimal.Value; low: Decimal.Value; close: Decimal.Value };
 }): IndicatorContext {
-  const sorted = sortCandles(candles);
-  const latest = sorted.at(-1);
+  const sorted = dedupeSortedCandles(candles);
+  const calculationCandles = dedupeSortedCandles([...warmupCandles, ...sorted]);
+  const latest = sorted.at(-1) ?? calculationCandles.at(-1);
 
   if (!latest) {
     return {
       underlying,
       candleCount: 0,
+      warmupCandleCount: 0,
       latestClose: "0.00",
       vwap: null,
       vwapDistance: null,
@@ -400,15 +414,15 @@ export function buildIndicatorContext({
     };
   }
 
-  const closes = sorted.map((candle) => candle.close);
+  const closes = calculationCandles.map((candle) => candle.close);
   const vwapSeries = calculateSessionVwap(sorted);
   const ema9Series = calculateEma(closes, 9);
   const ema20Series = calculateEma(closes, 20);
   const ema50Series = calculateEma(closes, 50);
-  const atr14Series = calculateAtr(sorted, 14);
+  const atr14Series = calculateAtr(calculationCandles, 14);
   const rsi14Series = calculateRsi(closes, 14);
-  const volumeAverage20Series = calculateRollingVolumeAverage(sorted, 20);
-  const relativeVolume20Series = calculateRelativeVolume(sorted, 20);
+  const volumeAverage20Series = calculateRollingVolumeAverage(calculationCandles, 20);
+  const relativeVolume20Series = calculateRelativeVolume(calculationCandles, 20);
   const openingRange15 = calculateOpeningRange(sorted, 15);
   const vwap = vwapSeries.at(-1)?.value ?? null;
   const latestClose = toFixed(latest.close);
@@ -425,6 +439,7 @@ export function buildIndicatorContext({
   return {
     underlying,
     candleCount: sorted.length,
+    warmupCandleCount: Math.max(0, calculationCandles.length - sorted.length),
     latestClose,
     vwap,
     vwapDistance: vwap ? toDecimal(latestClose).minus(vwap).toFixed(2) : null,

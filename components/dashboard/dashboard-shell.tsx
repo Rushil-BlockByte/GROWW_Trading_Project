@@ -525,6 +525,9 @@ export function DashboardShell({
   const [selectedUnderlying, setSelectedUnderlying] = useState<SimulatedUnderlying["symbol"]>("NIFTY");
   const [liveStatus, setLiveStatus] = useState<LiveKiteStreamSnapshot | null>(null);
   const liveSnapshot = liveStatus?.marketSnapshot;
+  const selectedOptionContext =
+    liveSnapshot?.phase5ByUnderlying?.[selectedUnderlying] ??
+    (liveSnapshot?.phase5.underlying === selectedUnderlying ? liveSnapshot.phase5 : undefined);
   const mode = liveSnapshot
     ? getMarketDataModeLabel(liveSnapshot.health.mode)
     : {
@@ -593,7 +596,11 @@ export function DashboardShell({
             <ScannerExplanationPanel snapshot={liveSnapshot} />
 
             <section className="grid gap-4 xl:grid-cols-[0.72fr_1.28fr]">
-              <OptionChainContextPanel context={liveSnapshot.phase5} />
+              {selectedOptionContext ? (
+                <OptionChainContextPanel context={selectedOptionContext} />
+              ) : (
+                <OptionContextWaitingPanel underlying={selectedUnderlying} />
+              )}
               <OptionChain
                 snapshot={liveSnapshot}
                 selectedUnderlying={selectedUnderlying}
@@ -1610,10 +1617,15 @@ function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot
               Indicator Context
             </CardTitle>
             <CardDescription>
-              {indicator.underlying} with {indicator.candleCount} one-minute candles
+              {indicator.underlying} with {indicator.candleCount} session candles
             </CardDescription>
           </div>
-          <Badge variant={emaTrendVariant(indicator.emaTrend)}>{indicator.emaTrend}</Badge>
+          <div className="flex flex-wrap justify-end gap-2">
+            {indicator.warmupCandleCount ? (
+              <Badge variant="outline">{indicator.warmupCandleCount} warm-up</Badge>
+            ) : null}
+            <Badge variant={emaTrendVariant(indicator.emaTrend)}>{indicator.emaTrend}</Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
@@ -1717,6 +1729,25 @@ function OptionChainContextPanel({ context }: { context: OptionChainContext }) {
         <div className="grid gap-3">
           <OiLevelList title="OI Support" levels={context.oiSupportLevels} />
           <OiLevelList title="OI Resistance" levels={context.oiResistanceLevels} />
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function OptionContextWaitingPanel({ underlying }: { underlying: SimulatedUnderlying["symbol"] }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Filter className="h-5 w-5 text-primary" />
+          Option Context
+        </CardTitle>
+        <CardDescription>{underlying}</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="rounded-md border bg-muted/35 px-3 py-3 text-sm text-muted-foreground">
+          Waiting for live option ticks.
         </div>
       </CardContent>
     </Card>
@@ -2236,9 +2267,15 @@ function OptionChain({
   selectedUnderlying: SimulatedUnderlying["symbol"];
   onSelectUnderlying: (symbol: SimulatedUnderlying["symbol"]) => void;
 }) {
+  const selectedOptionChain =
+    snapshot.optionChains?.[selectedUnderlying] ??
+    (snapshot.phase5.underlying === selectedUnderlying ? snapshot.optionChain : []);
+  const selectedContext =
+    snapshot.phase5ByUnderlying?.[selectedUnderlying] ??
+    (snapshot.phase5.underlying === selectedUnderlying ? snapshot.phase5 : undefined);
   const liquidityByStrike = useMemo(
-    () => new Map(snapshot.phase5.rows.map((row) => [row.strike, row])),
-    [snapshot.phase5.rows],
+    () => new Map((selectedContext?.rows ?? []).map((row) => [row.strike, row])),
+    [selectedContext],
   );
 
   return (
@@ -2251,7 +2288,9 @@ function OptionChain({
               Option Chain
             </CardTitle>
             <CardDescription>
-              {snapshot.health.mode === "live" ? "Nearest live expiry from Kite" : "Waiting for live expiry"}
+              {selectedContext?.expiry
+                ? `${selectedUnderlying} nearest live expiry ${selectedContext.expiry}`
+                : `${selectedUnderlying} waiting for live expiry`}
             </CardDescription>
           </div>
           <div className="flex rounded-md border bg-muted/35 p-1">
@@ -2282,8 +2321,8 @@ function OptionChain({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {snapshot.optionChain.length ? (
-              snapshot.optionChain.map((row) => {
+            {selectedOptionChain.length ? (
+              selectedOptionChain.map((row) => {
               const contextRow = liquidityByStrike.get(row.strike);
               const callStatus = contextRow?.call.status ?? "NOT_TRADABLE";
               const putStatus = contextRow?.put.status ?? "NOT_TRADABLE";
@@ -2327,7 +2366,7 @@ function OptionChain({
             ) : (
               <TableRow>
                 <TableCell colSpan={6} className="text-center text-muted-foreground">
-                  Waiting for live option ticks.
+                  Waiting for live {selectedUnderlying} option ticks.
                 </TableCell>
               </TableRow>
             )}

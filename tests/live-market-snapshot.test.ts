@@ -13,13 +13,32 @@ describe("live market snapshot", () => {
     const stateStore = new MarketStateStore(repository);
     const candleBuilder = new CandleBuilder(["1m", "5m", "15m"]);
     const now = new Date("2026-09-01T04:00:00.000Z");
-    const optionUniverse = repository.buildAtmOptionUniverse({
+    const niftyUniverse = repository.buildAtmOptionUniverse({
       underlyingSymbol: "NIFTY",
       underlyingLastPrice: "25123.45",
       expiry: getSimulatedExpiry(),
       strikeInterval: 50,
-      strikeWindow: 1,
+      strikeWindow: 5,
     });
+    const bankniftyUniverse = repository.buildAtmOptionUniverse({
+      underlyingSymbol: "BANKNIFTY",
+      underlyingLastPrice: "53999.90",
+      expiry: getSimulatedExpiry(),
+      strikeInterval: 100,
+      strikeWindow: 5,
+    });
+    const finniftyUniverse = repository.buildAtmOptionUniverse({
+      underlyingSymbol: "FINNIFTY",
+      underlyingLastPrice: "24222.20",
+      expiry: getSimulatedExpiry(),
+      strikeInterval: 50,
+      strikeWindow: 5,
+    });
+    const optionUniverses = {
+      NIFTY: niftyUniverse,
+      BANKNIFTY: bankniftyUniverse,
+      FINNIFTY: finniftyUniverse,
+    };
     const ticks = [
       normalizeSimulatedTick({
         instrumentToken: 256265,
@@ -42,18 +61,20 @@ describe("live market snapshot", () => {
         volume: 1000,
         sequence: 3,
       }),
-      ...optionUniverse.instruments.map((instrument, index) =>
-        normalizeSimulatedTick({
-          instrumentToken: instrument.instrumentToken,
-          timestamp: now,
-          lastPrice: instrument.instrumentType === "CE" ? "104.25" : "98.70",
-          volume: 100_000 + index,
-          openInterest: 800_000 + index,
-          bid: instrument.instrumentType === "CE" ? "104.00" : "98.50",
-          ask: instrument.instrumentType === "CE" ? "104.50" : "98.95",
-          sequence: 10 + index,
-        }),
-      ),
+      ...Object.values(optionUniverses)
+        .flatMap((universe) => universe.instruments)
+        .map((instrument, index) =>
+          normalizeSimulatedTick({
+            instrumentToken: instrument.instrumentToken,
+            timestamp: now,
+            lastPrice: instrument.instrumentType === "CE" ? "104.25" : "98.70",
+            volume: 100_000 + index,
+            openInterest: 800_000 + index,
+            bid: instrument.instrumentType === "CE" ? "104.00" : "98.50",
+            ask: instrument.instrumentType === "CE" ? "104.50" : "98.95",
+            sequence: 10 + index,
+          }),
+        ),
     ];
 
     for (const tick of ticks) {
@@ -75,12 +96,28 @@ describe("live market snapshot", () => {
         uptimeSeconds: 30,
       },
       instrumentMasterCount: instruments.length,
-      optionUniverse: {
-        selectedUnderlying: "NIFTY",
-        expiry: optionUniverse.expiry,
-        atmStrike: optionUniverse.atmStrike,
-        instruments: optionUniverse.instruments,
-        missingContracts: optionUniverse.missingContracts.length,
+      optionUniverses: {
+        NIFTY: {
+          selectedUnderlying: "NIFTY",
+          expiry: niftyUniverse.expiry,
+          atmStrike: niftyUniverse.atmStrike,
+          instruments: niftyUniverse.instruments,
+          missingContracts: niftyUniverse.missingContracts.length,
+        },
+        BANKNIFTY: {
+          selectedUnderlying: "BANKNIFTY",
+          expiry: bankniftyUniverse.expiry,
+          atmStrike: bankniftyUniverse.atmStrike,
+          instruments: bankniftyUniverse.instruments,
+          missingContracts: bankniftyUniverse.missingContracts.length,
+        },
+        FINNIFTY: {
+          selectedUnderlying: "FINNIFTY",
+          expiry: finniftyUniverse.expiry,
+          atmStrike: finniftyUniverse.atmStrike,
+          instruments: finniftyUniverse.instruments,
+          missingContracts: finniftyUniverse.missingContracts.length,
+        },
       },
       generatedAt: now,
     });
@@ -88,8 +125,13 @@ describe("live market snapshot", () => {
     expect(snapshot?.health.mode).toBe("live");
     expect(snapshot?.underlyings[0].lastPrice).toBe(25123.45);
     expect(snapshot?.underlyings[0].lastPrice).not.toBe(25180);
-    expect(snapshot?.optionChain).toHaveLength(3);
+    expect(snapshot?.optionChain).toHaveLength(11);
+    expect(snapshot?.optionChains?.NIFTY).toHaveLength(11);
+    expect(snapshot?.optionChains?.BANKNIFTY).toHaveLength(11);
+    expect(snapshot?.optionChains?.FINNIFTY).toHaveLength(11);
     expect(snapshot?.optionChain[0].call.lotSize).toBe(75);
-    expect(snapshot?.phase5.rowCount).toBe(3);
+    expect(snapshot?.phase5.rowCount).toBe(11);
+    expect(snapshot?.phase5ByUnderlying?.BANKNIFTY?.rowCount).toBe(11);
+    expect(snapshot?.phase5ByUnderlying?.FINNIFTY?.rowCount).toBe(11);
   });
 });
