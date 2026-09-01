@@ -1044,7 +1044,7 @@ function BacktestReportRow({
         </Badge>
       </TableCell>
       <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">
-        <span className={Number(record.netPnl) >= 0 ? "text-emerald-700" : "text-destructive"}>
+        <span className={Number(record.netPnl) >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-destructive"}>
           {formatInr(record.netPnl)}
         </span>
       </TableCell>
@@ -1215,7 +1215,7 @@ function BacktestSummaryPanel({ result }: { result: BacktestResult }) {
         </div>
 
         {result.warnings.length ? (
-          <div className="rounded-md border bg-yellow-50 p-3 text-sm font-medium text-yellow-950">
+          <div className="rounded-md border bg-yellow-50 p-3 text-sm font-medium text-yellow-950 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
             {result.warnings[0]}
           </div>
         ) : null}
@@ -1430,7 +1430,7 @@ function PaperTradeJournal({ snapshot }: { snapshot: SimulatedMarketSnapshot }) 
         </div>
 
         {!paperTradeGuard.allowed ? (
-          <div className="rounded-md border bg-yellow-50 p-3 text-sm font-medium text-yellow-950">
+          <div className="rounded-md border bg-yellow-50 p-3 text-sm font-medium text-yellow-950 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
             {paperTradeGuard.reason}
           </div>
         ) : null}
@@ -1625,7 +1625,7 @@ function OptionLeaderRow({
       </div>
       <div className="text-right tabular-nums">
         <p className="font-semibold">{formatNumber(leader.openInterest)}</p>
-        <p className="text-xs text-emerald-700">{formatSigned(leader.oiChange)}</p>
+        <p className="text-xs text-emerald-700 dark:text-emerald-300">{formatSigned(leader.oiChange)}</p>
       </div>
     </div>
   );
@@ -1648,7 +1648,7 @@ function OiLevelList({ title, levels }: { title: string; levels: OptionOpenInter
               </div>
               <div className="text-right tabular-nums">
                 <p className="font-semibold">{formatNumber(level.openInterest)}</p>
-                <p className="text-xs text-emerald-700">{formatSigned(level.oiChange)}</p>
+                <p className="text-xs text-emerald-700 dark:text-emerald-300">{formatSigned(level.oiChange)}</p>
               </div>
             </div>
           ))
@@ -1818,7 +1818,7 @@ function LiveConnectionPanel() {
         ) : null}
 
         {message || status?.lastError ? (
-          <p className="rounded-md border bg-yellow-50 p-2 text-xs font-medium text-yellow-950">
+          <p className="rounded-md border bg-yellow-50 p-2 text-xs font-medium text-yellow-950 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
             {message ?? status?.lastError}
           </p>
         ) : null}
@@ -1922,7 +1922,7 @@ function MarketCard({
             <p className="text-2xl font-semibold tabular-nums">{formatNumber(underlying.lastPrice)}</p>
           </div>
           <div className="text-right text-sm">
-            <p className="font-semibold text-emerald-700">
+            <p className="font-semibold text-emerald-700 dark:text-emerald-300">
               {formatSigned(underlying.change)}
             </p>
             <p className="text-muted-foreground">
@@ -2147,7 +2147,7 @@ function OptionChain({
                   <TableCell className="font-semibold tabular-nums">{formatInr(row.call.ltp)}</TableCell>
                   <TableCell className="tabular-nums">
                     {formatNumber(row.call.openInterest)}
-                    <span className="ml-1 text-xs text-emerald-700">
+                    <span className="ml-1 text-xs text-emerald-700 dark:text-emerald-300">
                       {formatSigned(row.call.oiChange)}
                     </span>
                   </TableCell>
@@ -2157,7 +2157,7 @@ function OptionChain({
                   </TableCell>
                   <TableCell className="tabular-nums">
                     {formatNumber(row.put.openInterest)}
-                    <span className="ml-1 text-xs text-emerald-700">
+                    <span className="ml-1 text-xs text-emerald-700 dark:text-emerald-300">
                       {formatSigned(row.put.oiChange)}
                     </span>
                   </TableCell>
@@ -2311,14 +2311,14 @@ function SystemHealth({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
             </div>
           ))}
         </div>
-        <div className="flex items-start gap-3 rounded-md border bg-yellow-50 p-3 text-sm text-yellow-950">
+        <div className="flex items-start gap-3 rounded-md border bg-yellow-50 p-3 text-sm text-yellow-950 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">
           <WifiOff className="mt-0.5 h-5 w-5" />
           <div>
             <p className="font-semibold">Live stream disconnected</p>
             <p>Market-data pipeline is not connected.</p>
           </div>
         </div>
-        <div className="flex items-start gap-3 rounded-md border bg-red-50 p-3 text-sm text-red-950">
+        <div className="flex items-start gap-3 rounded-md border bg-red-50 p-3 text-sm text-red-950 dark:border-red-400/25 dark:bg-red-500/10 dark:text-red-100">
           <AlertTriangle className="mt-0.5 h-5 w-5" />
           <div>
             <p className="font-semibold">Live order execution disabled</p>

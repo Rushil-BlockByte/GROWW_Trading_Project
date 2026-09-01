@@ -465,7 +465,7 @@ function TradeRow({ trade }: { trade: BacktestReportDetailTrade }) {
         {trade.score}
       </TableCell>
       <TableCell className="whitespace-nowrap text-right font-semibold tabular-nums">
-        <span className={Number(trade.realizedPnl ?? 0) >= 0 ? "text-emerald-700" : "text-destructive"}>
+        <span className={Number(trade.realizedPnl ?? 0) >= 0 ? "text-emerald-700 dark:text-emerald-300" : "text-destructive"}>
           {formatInr(trade.realizedPnl)}
         </span>
       </TableCell>
