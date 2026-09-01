@@ -81,6 +81,7 @@ import type {
   BacktestReportRecord,
 } from "@/types/backtest-report";
 import type { PriceLevel } from "@/types/indicators";
+import type { MarketDataMode } from "@/types/market";
 import type {
   OptionChainContext,
   OptionLiquidityStatus,
@@ -523,7 +524,11 @@ export function DashboardShell({
 
         <section className="grid gap-3 lg:grid-cols-3">
           {snapshot.underlyings.map((underlying) => (
-            <MarketCard key={underlying.symbol} underlying={underlying} />
+            <MarketCard
+              key={underlying.symbol}
+              dataMode={snapshot.health.mode}
+              underlying={underlying}
+            />
           ))}
         </section>
 
@@ -1883,7 +1888,15 @@ function Phase2Pipeline({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   );
 }
 
-function MarketCard({ underlying }: { underlying: SimulatedUnderlying }) {
+function MarketCard({
+  dataMode,
+  underlying,
+}: {
+  dataMode: MarketDataMode;
+  underlying: SimulatedUnderlying;
+}) {
+  const isLive = dataMode === "live";
+
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -1892,13 +1905,20 @@ function MarketCard({ underlying }: { underlying: SimulatedUnderlying }) {
             <CardTitle>{underlying.label}</CardTitle>
             <CardDescription>{underlying.symbol}</CardDescription>
           </div>
-          <Badge variant={regimeVariant(underlying.regime)}>{underlying.regime.replace("_", " ")}</Badge>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={isLive ? "success" : "warning"}>
+              {isLive ? "Live" : "Replay sample"}
+            </Badge>
+            <Badge variant={regimeVariant(underlying.regime)}>{underlying.regime.replace("_", " ")}</Badge>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="flex items-end justify-between gap-3">
           <div>
-            <p className="text-xs font-medium uppercase text-muted-foreground">LTP</p>
+            <p className="text-xs font-medium uppercase text-muted-foreground">
+              {isLive ? "LTP" : "Sample LTP"}
+            </p>
             <p className="text-2xl font-semibold tabular-nums">{formatNumber(underlying.lastPrice)}</p>
           </div>
           <div className="text-right text-sm">
@@ -1927,7 +1947,7 @@ function MarketCard({ underlying }: { underlying: SimulatedUnderlying }) {
 
         <Badge variant={dataQualityVariant(underlying.dataQuality)} className="w-fit">
           <Activity className="h-3.5 w-3.5" />
-          Data quality: {underlying.dataQuality.replace("_", " ")}
+          {isLive ? "Data quality" : "Sample quality"}: {underlying.dataQuality.replace("_", " ")}
         </Badge>
       </CardContent>
     </Card>
