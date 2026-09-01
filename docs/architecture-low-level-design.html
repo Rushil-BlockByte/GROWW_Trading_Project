@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>GROWW Trading Project - Architecture And Low Level Design</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #071016;
+        --panel: #0d1b24;
+        --panel-2: #102833;
+        --panel-3: #152c38;
+        --line: #274653;
+        --text: #edf7f8;
+        --muted: #9fb4bd;
+        --green: #37d399;
+        --amber: #f8c65c;
+        --red: #ff6b6b;
+        --blue: #62b7ff;
+        --violet: #b99cff;
+        --ink: #041014;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at 18% 0%, rgba(98, 183, 255, 0.12), transparent 26rem),
+          radial-gradient(circle at 88% 10%, rgba(55, 211, 153, 0.12), transparent 22rem),
+          #071016;
+        color: var(--text);
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        line-height: 1.55;
+      }
+
+      .page {
+        width: min(1220px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 32px 0 56px;
+      }
+
+      header,
+      section {
+        margin-bottom: 24px;
+      }
+
+      .hero,
+      .card {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(13, 27, 36, 0.88);
+        box-shadow: 0 16px 44px rgba(0, 0, 0, 0.24);
+      }
+
+      .hero {
+        padding: 28px;
+      }
+
+      .card {
+        padding: 18px;
+      }
+
+      .kicker {
+        margin: 0 0 10px;
+        color: var(--green);
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin: 0;
+        letter-spacing: 0;
+        line-height: 1.15;
+      }
+
+      h1 {
+        max-width: 860px;
+        font-size: clamp(30px, 5vw, 54px);
+      }
+
+      h2 {
+        margin-bottom: 14px;
+        font-size: clamp(23px, 3vw, 34px);
+      }
+
+      h3 {
+        margin-bottom: 8px;
+        font-size: 18px;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .lead {
+        max-width: 900px;
+        margin-top: 14px;
+        color: var(--muted);
+        font-size: 18px;
+      }
+
+      .nav {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }
+
+      .nav a,
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        min-height: 38px;
+        padding: 8px 12px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: rgba(16, 40, 51, 0.9);
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 700;
+        text-decoration: none;
+      }
+
+      .diagram {
+        overflow-x: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: linear-gradient(180deg, rgba(16, 40, 51, 0.72), rgba(7, 16, 22, 0.92));
+      }
+
+      svg {
+        display: block;
+        min-width: 1120px;
+        width: 100%;
+        height: auto;
+      }
+
+      .box {
+        fill: #102833;
+        stroke: #315967;
+        stroke-width: 1.4;
+      }
+
+      .box-green {
+        fill: rgba(55, 211, 153, 0.16);
+        stroke: #37d399;
+      }
+
+      .box-blue {
+        fill: rgba(98, 183, 255, 0.14);
+        stroke: #62b7ff;
+      }
+
+      .box-amber {
+        fill: rgba(248, 198, 92, 0.13);
+        stroke: #f8c65c;
+      }
+
+      .box-violet {
+        fill: rgba(185, 156, 255, 0.13);
+        stroke: #b99cff;
+      }
+
+      .box-red {
+        fill: rgba(255, 107, 107, 0.12);
+        stroke: #ff6b6b;
+      }
+
+      .label {
+        fill: var(--text);
+        font-size: 16px;
+        font-weight: 800;
+      }
+
+      .small {
+        fill: var(--muted);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .arrow {
+        fill: none;
+        stroke: #8fb6c4;
+        stroke-width: 2;
+        marker-end: url(#arrow);
+      }
+
+      .grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      .grid-2 {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .flow-list {
+        display: grid;
+        gap: 10px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        counter-reset: item;
+      }
+
+      .flow-list li {
+        display: grid;
+        grid-template-columns: 34px 1fr;
+        gap: 12px;
+        align-items: start;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(16, 40, 51, 0.58);
+        counter-increment: item;
+      }
+
+      .flow-list li::before {
+        content: counter(item);
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--green);
+        color: var(--ink);
+        font-weight: 900;
+      }
+
+      .muted {
+        color: var(--muted);
+      }
+
+      .good {
+        color: var(--green);
+      }
+
+      .warn {
+        color: var(--amber);
+      }
+
+      code {
+        padding: 2px 6px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: rgba(0, 0, 0, 0.22);
+        color: #dff8ee;
+        font-family: "Cascadia Mono", Consolas, monospace;
+        font-size: 0.92em;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+
+      th,
+      td {
+        padding: 12px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--green);
+        font-size: 13px;
+        text-transform: uppercase;
+      }
+
+      tr:last-child td {
+        border-bottom: 0;
+      }
+
+      @media (max-width: 900px) {
+        .grid-2 {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          padding: 22px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <p class="kicker">Architecture And Low Level Design</p>
+        <h1>How Data Moves Through The Trading Scanner</h1>
+        <p class="lead">
+          Think of the system as a read-only data pipeline. It connects to Kite, builds clean market
+          context, scores a setup, applies safety and risk gates, and then lets you record only a
+          paper-trade decision.
+        </p>
+        <nav class="nav" aria-label="Guide links">
+          <a href="project-workflow.html">Simple Workflow Guide</a>
+          <a href="#architecture">Architecture Diagram</a>
+          <a href="#low-level-flow">Low Level Flow</a>
+          <a href="#file-map">File Map</a>
+        </nav>
+      </header>
+
+      <section id="architecture">
+        <h2>Architecture Diagram</h2>
+        <div class="diagram" role="img" aria-label="Architecture diagram for the trading scanner">
+          <svg viewBox="0 0 1180 720" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#8fb6c4" />
+              </marker>
+            </defs>
+
+            <rect x="30" y="40" width="210" height="86" rx="8" class="box-blue" />
+            <text x="54" y="75" class="label">Browser Dashboard</text>
+            <text x="54" y="100" class="small">Market cards, indicators, options</text>
+
+            <rect x="310" y="40" width="220" height="86" rx="8" class="box" />
+            <text x="334" y="75" class="label">Next.js UI</text>
+            <text x="334" y="100" class="small">Dashboard components and pages</text>
+
+            <rect x="600" y="40" width="220" height="86" rx="8" class="box" />
+            <text x="624" y="75" class="label">API Routes</text>
+            <text x="624" y="100" class="small">Stream, reports, journal, auth</text>
+
+            <rect x="890" y="40" width="230" height="86" rx="8" class="box-amber" />
+            <text x="914" y="75" class="label">Zerodha Kite</text>
+            <text x="914" y="100" class="small">WebSocket, instruments, candles</text>
+
+            <path d="M240 83 H310" class="arrow" />
+            <path d="M530 83 H600" class="arrow" />
+            <path d="M820 83 H890" class="arrow" />
+
+            <rect x="95" y="185" width="210" height="88" rx="8" class="box-green" />
+            <text x="119" y="220" class="label">Live Stream Service</text>
+            <text x="119" y="245" class="small">Starts stream and manages state</text>
+
+            <rect x="365" y="185" width="210" height="88" rx="8" class="box-violet" />
+            <text x="389" y="220" class="label">Instrument Master</text>
+            <text x="389" y="245" class="small">NSE/NFO symbols and tokens</text>
+
+            <rect x="635" y="185" width="210" height="88" rx="8" class="box-violet" />
+            <text x="659" y="220" class="label">Market State Store</text>
+            <text x="659" y="245" class="small">Latest tick, OI, bid, ask</text>
+
+            <rect x="905" y="185" width="210" height="88" rx="8" class="box-violet" />
+            <text x="929" y="220" class="label">Candle Builder</text>
+            <text x="929" y="245" class="small">1m, 5m, 15m live candles</text>
+
+            <path d="M710 126 C710 155 200 155 200 185" class="arrow" />
+            <path d="M890 126 C780 150 500 160 470 185" class="arrow" />
+            <path d="M1005 126 V185" class="arrow" />
+            <path d="M305 229 H365" class="arrow" />
+            <path d="M575 229 H635" class="arrow" />
+            <path d="M845 229 H905" class="arrow" />
+
+            <rect x="65" y="340" width="220" height="88" rx="8" class="box-green" />
+            <text x="89" y="375" class="label">Indicator Engine</text>
+            <text x="89" y="400" class="small">VWAP, EMA, ATR, RSI, levels</text>
+
+            <rect x="330" y="340" width="230" height="88" rx="8" class="box-green" />
+            <text x="354" y="375" class="label">Option Chain Context</text>
+            <text x="354" y="400" class="small">CE/PE rows, OI, spreads, liquidity</text>
+
+            <rect x="605" y="340" width="220" height="88" rx="8" class="box-green" />
+            <text x="629" y="375" class="label">Strategy Engine</text>
+            <text x="629" y="400" class="small">Scores setup and explains no trade</text>
+
+            <rect x="875" y="340" width="220" height="88" rx="8" class="box-red" />
+            <text x="899" y="375" class="label">Safety And Risk</text>
+            <text x="899" y="400" class="small">Freshness, market hours, sizing</text>
+
+            <path d="M1010 273 C1010 310 175 305 175 340" class="arrow" />
+            <path d="M740 273 C740 310 445 305 445 340" class="arrow" />
+            <path d="M560 384 H605" class="arrow" />
+            <path d="M825 384 H875" class="arrow" />
+
+            <rect x="180" y="505" width="230" height="88" rx="8" class="box-blue" />
+            <text x="204" y="540" class="label">Live Snapshot</text>
+            <text x="204" y="565" class="small">One clean object for the dashboard</text>
+
+            <rect x="485" y="505" width="230" height="88" rx="8" class="box-amber" />
+            <text x="509" y="540" class="label">Paper Journal</text>
+            <text x="509" y="565" class="small">Paper trades and notes only</text>
+
+            <rect x="790" y="505" width="230" height="88" rx="8" class="box-amber" />
+            <text x="814" y="540" class="label">Reports And Reviews</text>
+            <text x="814" y="565" class="small">Backtests, saved reports, notes</text>
+
+            <path d="M715 428 C715 470 295 470 295 505" class="arrow" />
+            <path d="M985 428 C985 470 600 470 600 505" class="arrow" />
+            <path d="M715 593 C720 640 420 650 420 126" class="arrow" />
+            <path d="M715 549 H790" class="arrow" />
+
+            <rect x="55" y="635" width="1070" height="46" rx="8" class="box" />
+            <text x="80" y="664" class="small">
+              Important safety rule: live orders stay disabled. The system supports read-only live data and paper-trade recording.
+            </text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="low-level-flow">
+        <h2>Low Level Design Flow</h2>
+        <div class="grid grid-2">
+          <article class="card">
+            <h3>1. Start Stream Flow</h3>
+            <ol class="flow-list">
+              <li>
+                <div>
+                  <strong>User clicks Start Stream.</strong>
+                  <p class="muted">The dashboard calls the stream API.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Safety checks run first.</strong>
+                  <p class="muted">Credentials, market hours, and access token are checked.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Instrument master loads.</strong>
+                  <p class="muted">The app downloads NSE and NFO instruments from Kite.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Indicators are warmed.</strong>
+                  <p class="muted">Recent 1-minute candles are fetched so EMA, RSI, ATR, and volume are ready.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>WebSocket connects.</strong>
+                  <p class="muted">Index ticks arrive first; option-chain subscriptions follow around ATM.</p>
+                </div>
+              </li>
+            </ol>
+          </article>
+
+          <article class="card">
+            <h3>2. Tick To Decision Flow</h3>
+            <ol class="flow-list">
+              <li>
+                <div>
+                  <strong>Live tick arrives.</strong>
+                  <p class="muted">The raw tick is normalized into a clean internal format.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>State and candles update.</strong>
+                  <p class="muted">Latest price, OI, bid/ask, and 1m/5m/15m candles are refreshed.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Indicators update.</strong>
+                  <p class="muted">VWAP, EMAs, ATR, RSI, volume, opening range, support, and resistance refresh.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Option context updates.</strong>
+                  <p class="muted">NIFTY, BANKNIFTY, and FINNIFTY option rows are calculated separately.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Scanner scores the setup.</strong>
+                  <p class="muted">The app explains confirmed, forming, no trade, or blocked states.</p>
+                </div>
+              </li>
+            </ol>
+          </article>
+
+          <article class="card">
+            <h3>3. Paper Trade Flow</h3>
+            <ol class="flow-list">
+              <li>
+                <div>
+                  <strong>Scanner must confirm.</strong>
+                  <p class="muted">No confirmed signal means no paper trade button action.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Selected contract must be tradable.</strong>
+                  <p class="muted">The option needs live LTP, volume, OI, and acceptable spread.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Risk size is calculated.</strong>
+                  <p class="muted">Quantity uses trading capital, risk percent, live option LTP, stop, and lot size.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Journal entry is saved.</strong>
+                  <p class="muted">The app saves paper trade details and rule checks for review.</p>
+                </div>
+              </li>
+            </ol>
+          </article>
+
+          <article class="card">
+            <h3>4. No Trade Flow</h3>
+            <ol class="flow-list">
+              <li>
+                <div>
+                  <strong>Data is incomplete or stale.</strong>
+                  <p class="muted">Blank indicators, stale ticks, or disconnected WebSocket block decisions.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Market setup is weak.</strong>
+                  <p class="muted">Sideways price, low volume, poor momentum, or bad risk-reward can block.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Option is not safe enough.</strong>
+                  <p class="muted">Wide spread, low OI, low volume, or unavailable contract blocks the trade.</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <strong>Explanation is shown.</strong>
+                  <p class="muted">The AI explanation layer translates the reason into plain language.</p>
+                </div>
+              </li>
+            </ol>
+          </article>
+        </div>
+      </section>
+
+      <section id="file-map">
+        <h2>Simple File Map</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Area</th>
+              <th>Main Files</th>
+              <th>Simple Purpose</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Dashboard UI</td>
+              <td><code>components/dashboard/dashboard-shell.tsx</code></td>
+              <td>Shows the cards, tables, scanner, stream controls, journal, and reports.</td>
+            </tr>
+            <tr>
+              <td>Live Kite Stream</td>
+              <td><code>lib/zerodha/live-stream-service.ts</code></td>
+              <td>Starts the stream, loads instruments, warms indicators, and subscribes live symbols.</td>
+            </tr>
+            <tr>
+              <td>Live Snapshot</td>
+              <td><code>lib/zerodha/live-market-snapshot.ts</code></td>
+              <td>Turns raw live state into one dashboard-ready market snapshot.</td>
+            </tr>
+            <tr>
+              <td>Indicators</td>
+              <td><code>lib/indicators/core.ts</code></td>
+              <td>Calculates VWAP, EMA, ATR, RSI, opening range, support, and resistance.</td>
+            </tr>
+            <tr>
+              <td>Option Context</td>
+              <td><code>lib/options/chain-context.ts</code></td>
+              <td>Calculates option liquidity, OI leaders, OI support, and OI resistance.</td>
+            </tr>
+            <tr>
+              <td>Strategy</td>
+              <td><code>lib/strategy/vwap-breakout.ts</code></td>
+              <td>Scores the setup and decides confirmed, forming, or no trade.</td>
+            </tr>
+            <tr>
+              <td>Risk</td>
+              <td><code>lib/risk/position-sizing.ts</code></td>
+              <td>Calculates position size from capital, risk per trade, entry, stop, and lot size.</td>
+            </tr>
+            <tr>
+              <td>Journal And Reports</td>
+              <td><code>lib/paper-trading/journal.ts</code>, <code>lib/persistence/*</code></td>
+              <td>Saves paper trades, notes, backtest reports, and review records.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
+  </body>
+</html>
