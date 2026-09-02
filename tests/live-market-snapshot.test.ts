@@ -39,6 +39,14 @@ describe("live market snapshot", () => {
       BANKNIFTY: bankniftyUniverse,
       FINNIFTY: finniftyUniverse,
     };
+    const niftyFuture = repository.getNearestFuture("NIFTY", now);
+    const bankniftyFuture = repository.getNearestFuture("BANKNIFTY", now);
+    const finniftyFuture = repository.getNearestFuture("FINNIFTY", now);
+
+    if (!niftyFuture || !bankniftyFuture || !finniftyFuture) {
+      throw new Error("Missing simulated futures contracts.");
+    }
+
     const ticks = [
       normalizeSimulatedTick({
         instrumentToken: 256265,
@@ -60,6 +68,33 @@ describe("live market snapshot", () => {
         lastPrice: "24222.20",
         volume: 1000,
         sequence: 3,
+      }),
+      normalizeSimulatedTick({
+        instrumentToken: niftyFuture.instrumentToken,
+        timestamp: now,
+        lastPrice: "25130.00",
+        lastQuantity: 125,
+        volume: 150_000,
+        openInterest: 2_500_000,
+        sequence: 4,
+      }),
+      normalizeSimulatedTick({
+        instrumentToken: bankniftyFuture.instrumentToken,
+        timestamp: now,
+        lastPrice: "54040.00",
+        lastQuantity: 100,
+        volume: 120_000,
+        openInterest: 1_900_000,
+        sequence: 5,
+      }),
+      normalizeSimulatedTick({
+        instrumentToken: finniftyFuture.instrumentToken,
+        timestamp: now,
+        lastPrice: "24240.00",
+        lastQuantity: 80,
+        volume: 90_000,
+        openInterest: 1_100_000,
+        sequence: 6,
       }),
       ...Object.values(optionUniverses)
         .flatMap((universe) => universe.instruments)
@@ -133,6 +168,9 @@ describe("live market snapshot", () => {
     expect(snapshot?.phase5.rowCount).toBe(11);
     expect(snapshot?.phase5ByUnderlying?.BANKNIFTY?.rowCount).toBe(11);
     expect(snapshot?.phase5ByUnderlying?.FINNIFTY?.rowCount).toBe(11);
+    expect(snapshot?.phase2.indicatorSource?.tradingsymbol).toBe("NIFTY26SEPFUT");
+    expect(snapshot?.phase2.indicatorSources?.BANKNIFTY?.tradingsymbol).toBe("BANKNIFTY26SEPFUT");
+    expect(snapshot?.phase4ByUnderlying?.BANKNIFTY?.underlying).toBe("BANKNIFTY");
     expect(snapshot?.phase2.candleConfirmation?.status).toBe("BUILDING");
     expect(snapshot?.phase2.candleConfirmation?.decisionReady).toBe(false);
     expect(snapshot?.phase4.candleCount).toBe(0);
@@ -146,9 +184,10 @@ describe("live market snapshot", () => {
     const firstTickAt = new Date("2026-09-01T04:00:00.000Z");
     const secondTickAt = new Date("2026-09-01T04:01:00.000Z");
     const niftyInstrument = repository.findByTradingsymbol("NSE", "NIFTY");
+    const niftyFuture = repository.getNearestFuture("NIFTY", firstTickAt);
 
-    if (!niftyInstrument) {
-      throw new Error("Missing NIFTY instrument.");
+    if (!niftyInstrument || !niftyFuture) {
+      throw new Error("Missing NIFTY instruments.");
     }
 
     const ticks = [
@@ -165,6 +204,22 @@ describe("live market snapshot", () => {
         lastPrice: "25125.00",
         volume: 1300,
         sequence: 2,
+      }),
+      normalizeSimulatedTick({
+        instrumentToken: niftyFuture.instrumentToken,
+        timestamp: firstTickAt,
+        lastPrice: "25110.00",
+        lastQuantity: 100,
+        volume: 1000,
+        sequence: 3,
+      }),
+      normalizeSimulatedTick({
+        instrumentToken: niftyFuture.instrumentToken,
+        timestamp: secondTickAt,
+        lastPrice: "25135.00",
+        lastQuantity: 150,
+        volume: 1150,
+        sequence: 4,
       }),
     ];
 
@@ -195,7 +250,8 @@ describe("live market snapshot", () => {
     expect(snapshot?.phase2.candleConfirmation?.lastCompletedCandleEnd).toBe(
       "2026-09-01T04:01:00.000Z",
     );
+    expect(snapshot?.phase2.indicatorSource?.kind).toBe("FUTURE");
     expect(snapshot?.phase4.candleCount).toBe(1);
-    expect(snapshot?.phase4.latestClose).toBe("25100.00");
+    expect(snapshot?.phase4.latestClose).toBe("25110.00");
   });
 });

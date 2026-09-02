@@ -13,6 +13,7 @@ const INDEX_NAME_MATCHERS: Record<UnderlyingSymbol, RegExp[]> = {
 export type ResolvedLiveUniverse = {
   subscriptions: InstrumentSubscription[];
   instruments: InstrumentRecord[];
+  indicatorInstruments: Partial<Record<UnderlyingSymbol, InstrumentRecord>>;
   unresolved: UnderlyingSymbol[];
 };
 
@@ -38,32 +39,50 @@ export function resolveInitialLiveUniverse(
   symbols: UnderlyingSymbol[] = ["NIFTY", "BANKNIFTY", "FINNIFTY"],
 ): ResolvedLiveUniverse {
   const instruments: InstrumentRecord[] = [];
-  const unresolved: UnderlyingSymbol[] = [];
+  const indicatorInstruments: Partial<Record<UnderlyingSymbol, InstrumentRecord>> = {};
+  const unresolved = new Set<UnderlyingSymbol>();
 
   for (const symbol of symbols) {
-    const instrument = resolveIndexInstrument(repository, symbol);
+    const indexInstrument = resolveIndexInstrument(repository, symbol);
+    const futureInstrument = repository.getNearestFuture(symbol);
 
-    if (instrument) {
-      instruments.push(instrument);
+    if (indexInstrument) {
+      instruments.push(indexInstrument);
     } else {
-      unresolved.push(symbol);
+      unresolved.add(symbol);
+    }
+
+    if (futureInstrument) {
+      instruments.push(futureInstrument);
+      indicatorInstruments[symbol] = futureInstrument;
+    } else if (indexInstrument) {
+      indicatorInstruments[symbol] = indexInstrument;
+      unresolved.add(symbol);
     }
   }
 
-  const subscriptions = instruments.map((instrument) => {
+  const dedupedInstruments = dedupeInstruments(instruments);
+  const subscriptions = dedupedInstruments.map((instrument) => {
     const config = DEFAULT_UNDERLYINGS.find(
       (underlying) => underlying.symbol === instrument.underlyingSymbol,
     );
 
     return {
       instrumentToken: instrument.instrumentToken,
-      mode: config?.underlyingMode ?? "QUOTE",
+      mode: instrument.kind === "FUTURE" ? "FULL" : config?.underlyingMode ?? "QUOTE",
     };
   });
 
   return {
     subscriptions,
-    instruments,
-    unresolved,
+    instruments: dedupedInstruments,
+    indicatorInstruments,
+    unresolved: Array.from(unresolved),
   };
+}
+
+function dedupeInstruments(instruments: InstrumentRecord[]) {
+  return Array.from(
+    new Map(instruments.map((instrument) => [instrument.instrumentToken, instrument])).values(),
+  );
 }

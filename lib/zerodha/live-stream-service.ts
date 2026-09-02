@@ -68,6 +68,7 @@ export class LiveKiteStreamService {
   private subscribedInstruments: InstrumentRecord[] = [];
   private unresolvedUnderlyings: string[] = [];
   private liveOptionUniverses: LiveOptionUniversesSnapshot = {};
+  private indicatorInstruments: Partial<Record<UnderlyingSymbol, InstrumentRecord>> = {};
   private optionSubscriptionPending = new Set<UnderlyingSymbol>();
   private sessionCandlesByToken = new Map<number, IndicatorCandle[]>();
   private warmupCandlesByToken = new Map<number, IndicatorCandle[]>();
@@ -113,6 +114,7 @@ export class LiveKiteStreamService {
     this.subscribedInstruments = liveUniverse.instruments;
     this.unresolvedUnderlyings = liveUniverse.unresolved;
     this.liveOptionUniverses = {};
+    this.indicatorInstruments = liveUniverse.indicatorInstruments;
     this.optionSubscriptionPending = new Set();
     this.sessionCandlesByToken = new Map();
     this.warmupCandlesByToken = new Map();
@@ -262,6 +264,7 @@ export class LiveKiteStreamService {
       previousDayByToken: this.previousDayByToken,
       provider: providerStatus,
       instrumentMasterCount: this.instruments.length,
+      indicatorInstruments: this.indicatorInstruments,
       optionUniverses: this.liveOptionUniverses,
     });
 
@@ -461,7 +464,7 @@ const globalForKite = globalThis as unknown as {
   liveKiteStreamService?: LiveKiteStreamService;
   liveKiteStreamServiceVersion?: string;
 };
-const LIVE_KITE_STREAM_SERVICE_VERSION = "2026-09-02-index-volume-reason";
+const LIVE_KITE_STREAM_SERVICE_VERSION = "2026-09-02-futures-indicator-source";
 
 export function getLiveKiteStreamService() {
   if (

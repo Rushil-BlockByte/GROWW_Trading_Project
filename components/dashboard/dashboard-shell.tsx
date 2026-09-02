@@ -101,7 +101,11 @@ import type {
   PaperTradeJournalStatus,
 } from "@/types/paper-trading";
 import type { LiveKiteStreamSnapshot } from "@/lib/zerodha/live-stream-service";
-import type { SimulatedMarketSnapshot, SimulatedUnderlying } from "@/types/simulation";
+import type {
+  IndicatorSourceInstrument,
+  SimulatedMarketSnapshot,
+  SimulatedUnderlying,
+} from "@/types/simulation";
 import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/strategy";
 
 type DashboardShellProps = {
@@ -282,6 +286,21 @@ function candleConfirmationLabel(
   if (status === "CONFIRMED") return "Closed";
   if (status === "BUILDING") return "Building";
   return "Waiting";
+}
+
+function formatIndicatorSource(source: IndicatorSourceInstrument | undefined) {
+  if (!source) return "Pending";
+
+  return source.expiry
+    ? `${source.tradingsymbol} ${source.expiry}`
+    : source.tradingsymbol;
+}
+
+function indicatorSourceVariant(source: IndicatorSourceInstrument | undefined) {
+  if (source?.kind === "FUTURE") return "success" as const;
+  if (source?.kind === "INDEX") return "warning" as const;
+
+  return "muted" as const;
 }
 
 function dailyJournalToneVariant(tone: DailyIndexJournal["marketTone"]) {
@@ -697,7 +716,10 @@ export function DashboardShell({
             </section>
 
             <section className="grid gap-4 xl:grid-cols-[0.95fr_1.05fr]">
-              <IndicatorContextPanel snapshot={liveSnapshot} />
+              <IndicatorContextPanel
+                selectedUnderlying={selectedUnderlying}
+                snapshot={liveSnapshot}
+              />
               <OpportunityScanner snapshot={liveSnapshot} />
             </section>
 
@@ -1991,10 +2013,21 @@ function PaperJournalEntryRow({ entry }: { entry: PaperJournalEntry }) {
   );
 }
 
-function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
-  const indicator = snapshot.phase4;
+function IndicatorContextPanel({
+  selectedUnderlying,
+  snapshot,
+}: {
+  selectedUnderlying: SimulatedUnderlying["symbol"];
+  snapshot: SimulatedMarketSnapshot;
+}) {
+  const indicator = snapshot.phase4ByUnderlying?.[selectedUnderlying] ?? snapshot.phase4;
+  const indicatorSource =
+    snapshot.phase2.indicatorSources?.[selectedUnderlying] ?? snapshot.phase2.indicatorSource;
   const openingRange = indicator.openingRange15;
-  const candleConfirmation = snapshot.phase2.candleConfirmation ?? {
+  const candleConfirmation =
+    snapshot.phase2.candleConfirmations?.[selectedUnderlying] ??
+    snapshot.phase2.candleConfirmation ??
+    {
     status: "WAITING_FOR_TICK" as const,
     currentCandleStart: null,
     currentCandleEnd: null,
@@ -2004,7 +2037,7 @@ function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot
     decisionReady: false,
     message:
       "Candle confirmation is missing from this live snapshot. Restart the stream once to restore exact 1-minute close timing.",
-  };
+    };
 
   return (
     <Card>
@@ -2016,10 +2049,13 @@ function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot
               Indicator Context
             </CardTitle>
             <CardDescription>
-              {indicator.underlying} with {indicator.candleCount} session candles
+              {indicator.underlying} indicators from {formatIndicatorSource(indicatorSource)}
             </CardDescription>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            <Badge variant={indicatorSourceVariant(indicatorSource)}>
+              {indicatorSource?.kind === "FUTURE" ? "Futures source" : "Spot fallback"}
+            </Badge>
             {indicator.warmupCandleCount ? (
               <Badge variant="outline">{indicator.warmupCandleCount} warm-up</Badge>
             ) : null}
@@ -2063,6 +2099,11 @@ function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot
         </div>
 
         <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+          <Metric label="Source" value={formatIndicatorSource(indicatorSource)} />
+          <Metric
+            label="Session candles"
+            value={`${indicator.candleCount}${indicator.warmupCandleCount ? ` + ${indicator.warmupCandleCount}` : ""}`}
+          />
           <Metric label="Close" value={formatIndicator(indicator.latestClose)} />
           <Metric label="VWAP" value={formatIndicator(indicator.vwap)} />
           <Metric label="VWAP dist" value={formatSignedIndicator(indicator.vwapDistance)} />
@@ -2565,7 +2606,7 @@ function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-md border bg-muted/35 px-3 py-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
-      <p className="mt-1 font-semibold tabular-nums">{value}</p>
+      <p className="mt-1 break-words font-semibold leading-snug tabular-nums">{value}</p>
     </div>
   );
 }

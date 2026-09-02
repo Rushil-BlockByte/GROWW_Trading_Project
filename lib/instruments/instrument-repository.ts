@@ -76,6 +76,36 @@ export class InstrumentRepository {
     return this.getExpiries(underlyingSymbol, asOf)[0];
   }
 
+  getFutureExpiries(underlyingSymbol: UnderlyingSymbol, asOf = new Date()) {
+    const sessionDate = asOf.toISOString().slice(0, 10);
+    const expiries = new Set<string>();
+
+    for (const instrument of this.getAll()) {
+      if (
+        instrument.underlyingSymbol === underlyingSymbol &&
+        instrument.kind === "FUTURE" &&
+        instrument.expiry &&
+        instrument.expiry >= sessionDate
+      ) {
+        expiries.add(instrument.expiry);
+      }
+    }
+
+    return Array.from(expiries).sort();
+  }
+
+  getNearestFuture(underlyingSymbol: UnderlyingSymbol, asOf = new Date()) {
+    const expiry = this.getFutureExpiries(underlyingSymbol, asOf)[0];
+
+    if (!expiry) return undefined;
+
+    return this.search({
+      underlyingSymbol,
+      expiry,
+      instrumentType: "FUT",
+    }).find((instrument) => instrument.kind === "FUTURE");
+  }
+
   buildAtmOptionUniverse(request: OptionUniverseRequest): OptionUniverseResult {
     const atmStrike = new Decimal(request.underlyingLastPrice)
       .div(request.strikeInterval)

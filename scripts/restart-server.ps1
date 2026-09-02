@@ -11,14 +11,29 @@ Write-Host "Restarting Groww Trading Project"
 Write-Host "Project: $ProjectRoot"
 Write-Host "Port: $Port"
 
-$connections = @()
-try {
-  $connections = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue)
-} catch {
-  Write-Warning "Could not inspect port $Port. Continuing to start the server."
+function Get-PortOwningProcessIds {
+  param([int]$TargetPort)
+
+  $processIds = @()
+
+  try {
+    $connections = @(Get-NetTCPConnection -LocalPort $TargetPort -State Listen -ErrorAction SilentlyContinue)
+    $processIds += $connections | Select-Object -ExpandProperty OwningProcess
+  } catch {
+    Write-Warning "Could not inspect port $TargetPort with Get-NetTCPConnection."
+  }
+
+  if (-not $processIds) {
+    $pattern = "[:.]$TargetPort\s+.*LISTENING\s+(\d+)$"
+    $processIds += netstat -ano |
+      Select-String -Pattern $pattern |
+      ForEach-Object { [int]$_.Matches[0].Groups[1].Value }
+  }
+
+  $processIds | Where-Object { $_ } | Select-Object -Unique
 }
 
-$owningProcesses = $connections | Select-Object -ExpandProperty OwningProcess -Unique
+$owningProcesses = @(Get-PortOwningProcessIds -TargetPort $Port)
 
 foreach ($owningProcess in $owningProcesses) {
   if (-not $owningProcess -or $owningProcess -eq $PID) {

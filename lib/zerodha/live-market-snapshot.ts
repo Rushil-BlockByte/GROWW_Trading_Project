@@ -8,10 +8,11 @@ import type { MarketDataProviderStatus } from "@/lib/providers/market-data-provi
 import { buildOptionChainContext } from "@/lib/options/chain-context";
 import { evaluateVwapBreakoutStrategy } from "@/lib/strategy/vwap-breakout";
 import type { MarketCandleData } from "@/types/candles";
-import type { IndicatorCandle } from "@/types/indicators";
+import type { IndicatorCandle, IndicatorContext } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
 import type { DataQualityStatus, MarketRegime, MarketTick, UnderlyingSymbol } from "@/types/market";
 import type {
+  IndicatorSourceInstrument,
   OneMinuteCandleConfirmation,
   SimulatedMarketSnapshot,
   SimulatedOptionLeg,
@@ -51,6 +52,7 @@ export type LiveMarketSnapshotInput = {
   instrumentMasterCount: number;
   optionUniverse?: LiveOptionUniverseSnapshot;
   optionUniverses?: LiveOptionUniversesSnapshot;
+  indicatorInstruments?: Partial<Record<UnderlyingSymbol, InstrumentRecord>>;
   generatedAt?: Date;
 };
 
@@ -65,6 +67,7 @@ export function buildLiveMarketSnapshot({
   instrumentMasterCount,
   optionUniverse,
   optionUniverses,
+  indicatorInstruments,
   generatedAt = new Date(),
 }: LiveMarketSnapshotInput): SimulatedMarketSnapshot | undefined {
   if (!repository || !stateStore || provider.connected === false) {
@@ -87,17 +90,45 @@ export function buildLiveMarketSnapshot({
     return undefined;
   }
 
-  const niftyInstrumentToken = niftyState.instrument.instrumentToken;
-  const niftySessionCandles = sessionCandlesByToken?.get(niftyInstrumentToken) ?? [];
+  const indicatorSources = buildLiveIndicatorSourcesByUnderlying({
+    asOf: generatedAt,
+    indicatorInstruments,
+    repository,
+    stateStore,
+  });
+  const selectedIndicatorSource =
+    indicatorSources[LIVE_SELECTED_UNDERLYING] ?? {
+      instrument: niftyState.instrument,
+      state: niftyState.state,
+    };
+  const selectedIndicatorToken = selectedIndicatorSource.instrument.instrumentToken;
+  const selectedSessionCandles = sessionCandlesByToken?.get(selectedIndicatorToken) ?? [];
   const completedIndicatorCandles = liveIndicatorCandles({
     candleBuilder,
-    instrumentToken: niftyInstrumentToken,
-    sessionCandles: niftySessionCandles,
+    instrumentToken: selectedIndicatorToken,
+    sessionCandles: selectedSessionCandles,
   });
   const candleConfirmation = buildOneMinuteCandleConfirmation({
     candleBuilder,
-    instrumentToken: niftyInstrumentToken,
-    sessionCandles: niftySessionCandles,
+    instrumentToken: selectedIndicatorToken,
+    sessionCandles: selectedSessionCandles,
+  });
+  const phase4ByUnderlying = buildLiveIndicatorContextByUnderlying({
+    candleBuilder,
+    indicatorSources,
+    previousDayByToken,
+    sessionCandlesByToken,
+    warmupCandlesByToken,
+  });
+  const indicatorSourceMetadata = indicatorSourceFromInstrument(
+    selectedIndicatorSource.instrument,
+  );
+  const indicatorSourceMetadataByUnderlying =
+    indicatorSourcesFromInstrumentMap(indicatorSources);
+  const candleConfirmations = buildLiveCandleConfirmationsByUnderlying({
+    candleBuilder,
+    indicatorSources,
+    sessionCandlesByToken,
   });
   const liveOptionUniverses =
     optionUniverses ??
@@ -125,14 +156,16 @@ export function buildLiveMarketSnapshot({
       expiry: liveOptionUniverses[LIVE_SELECTED_UNDERLYING]?.expiry ?? "",
       rows: optionChain,
     });
-  const phase4 = buildIndicatorContext({
-    underlying: LIVE_SELECTED_UNDERLYING,
-    candles: completedIndicatorCandles,
-    warmupCandles: warmupCandlesByToken?.get(niftyInstrumentToken) ?? [],
-    previousDay:
-      previousDayByToken?.get(niftyInstrumentToken) ??
-      previousDayFromTick(niftyState.state.latestTick),
-  });
+  const phase4 =
+    phase4ByUnderlying[LIVE_SELECTED_UNDERLYING] ??
+    buildIndicatorContext({
+      underlying: LIVE_SELECTED_UNDERLYING,
+      candles: completedIndicatorCandles,
+      warmupCandles: warmupCandlesByToken?.get(selectedIndicatorToken) ?? [],
+      previousDay:
+        previousDayByToken?.get(selectedIndicatorToken) ??
+        previousDayFromTick(selectedIndicatorSource.state?.latestTick ?? niftyState.state.latestTick),
+    });
   const phase6 = evaluateVwapBreakoutStrategy({
     indicator: phase4,
     optionContext: phase5,
@@ -195,11 +228,15 @@ export function buildLiveMarketSnapshot({
       activeCandles:
         candleBuilder
           ?.getActiveCandles()
-          .filter((candle) => candle.instrumentToken === niftyInstrumentToken) ?? [],
+          .filter((candle) => candle.instrumentToken === selectedIndicatorToken) ?? [],
       completedCandleCount: completedIndicatorCandles.length,
+      indicatorSource: indicatorSourceMetadata,
+      indicatorSources: indicatorSourceMetadataByUnderlying,
       candleConfirmation,
+      candleConfirmations,
     },
     phase4,
+    phase4ByUnderlying,
     phase5,
     phase5ByUnderlying,
     phase6,
@@ -251,6 +288,159 @@ function findUnderlyingState({
   if (!state) return undefined;
 
   return { instrument, state };
+}
+
+type LiveIndicatorSourceState = {
+  instrument: InstrumentRecord;
+  state?: ReturnType<MarketStateStore["getInstrumentState"]>;
+};
+
+function buildLiveIndicatorSourcesByUnderlying({
+  asOf,
+  indicatorInstruments,
+  repository,
+  stateStore,
+}: {
+  asOf: Date;
+  indicatorInstruments: LiveMarketSnapshotInput["indicatorInstruments"];
+  repository: InstrumentRepository;
+  stateStore: MarketStateStore;
+}) {
+  return DEFAULT_UNDERLYINGS.reduce<Partial<Record<UnderlyingSymbol, LiveIndicatorSourceState>>>(
+    (sources, underlying) => {
+      const symbol = underlying.symbol;
+      const preferred = indicatorInstruments?.[symbol];
+      const future =
+        preferred?.kind === "FUTURE" ? preferred : repository.getNearestFuture(symbol, asOf);
+      const fallback = future ?? preferred ?? findUnderlyingState({ repository, stateStore, symbol })?.instrument;
+
+      if (!fallback) return sources;
+
+      sources[symbol] = {
+        instrument: fallback,
+        state: stateStore.getInstrumentState(fallback.instrumentToken),
+      };
+
+      return sources;
+    },
+    {},
+  );
+}
+
+function buildLiveIndicatorContextByUnderlying({
+  candleBuilder,
+  indicatorSources,
+  previousDayByToken,
+  sessionCandlesByToken,
+  warmupCandlesByToken,
+}: {
+  candleBuilder: LiveMarketSnapshotInput["candleBuilder"];
+  indicatorSources: Partial<Record<UnderlyingSymbol, LiveIndicatorSourceState>>;
+  previousDayByToken: LiveMarketSnapshotInput["previousDayByToken"];
+  sessionCandlesByToken: LiveMarketSnapshotInput["sessionCandlesByToken"];
+  warmupCandlesByToken: LiveMarketSnapshotInput["warmupCandlesByToken"];
+}) {
+  return DEFAULT_UNDERLYINGS.reduce<Partial<Record<UnderlyingSymbol, IndicatorContext>>>(
+    (contexts, underlying) => {
+      const source = indicatorSources[underlying.symbol];
+
+      if (!source) return contexts;
+
+      const token = source.instrument.instrumentToken;
+      const sessionCandles = sessionCandlesByToken?.get(token) ?? [];
+      const warmupCandles = warmupCandlesByToken?.get(token) ?? [];
+      const completedCandles = liveIndicatorCandles({
+        candleBuilder,
+        instrumentToken: token,
+        sessionCandles,
+      });
+      const previousDay =
+        previousDayByToken?.get(token) ??
+        (source.state ? previousDayFromTick(source.state.latestTick) : previousDayFromCandlesForFallback([
+          ...warmupCandles,
+          ...completedCandles,
+        ]));
+
+      if (!previousDay) return contexts;
+
+      contexts[underlying.symbol] = buildIndicatorContext({
+        underlying: underlying.symbol,
+        candles: completedCandles,
+        warmupCandles,
+        previousDay,
+      });
+
+      return contexts;
+    },
+    {},
+  );
+}
+
+function buildLiveCandleConfirmationsByUnderlying({
+  candleBuilder,
+  indicatorSources,
+  sessionCandlesByToken,
+}: {
+  candleBuilder: LiveMarketSnapshotInput["candleBuilder"];
+  indicatorSources: Partial<Record<UnderlyingSymbol, LiveIndicatorSourceState>>;
+  sessionCandlesByToken: LiveMarketSnapshotInput["sessionCandlesByToken"];
+}) {
+  return DEFAULT_UNDERLYINGS.reduce<
+    Partial<Record<UnderlyingSymbol, OneMinuteCandleConfirmation>>
+  >((confirmations, underlying) => {
+    const source = indicatorSources[underlying.symbol];
+
+    if (!source) return confirmations;
+
+    const token = source.instrument.instrumentToken;
+
+    confirmations[underlying.symbol] = buildOneMinuteCandleConfirmation({
+      candleBuilder,
+      instrumentToken: token,
+      sessionCandles: sessionCandlesByToken?.get(token) ?? [],
+    });
+
+    return confirmations;
+  }, {});
+}
+
+function indicatorSourceFromInstrument(
+  instrument: InstrumentRecord,
+): IndicatorSourceInstrument | undefined {
+  if (
+    !instrument.underlyingSymbol ||
+    instrument.underlyingSymbol === "INDIA_VIX" ||
+    (instrument.kind !== "FUTURE" && instrument.kind !== "INDEX")
+  ) {
+    return undefined;
+  }
+
+  return {
+    underlying: instrument.underlyingSymbol,
+    exchange: instrument.exchange,
+    tradingsymbol: instrument.tradingsymbol,
+    instrumentToken: instrument.instrumentToken,
+    kind: instrument.kind,
+    expiry: instrument.expiry,
+  };
+}
+
+function indicatorsSourcesEntries(
+  indicatorSources: Partial<Record<UnderlyingSymbol, LiveIndicatorSourceState>>,
+) {
+  return Object.entries(indicatorSources).flatMap(([symbol, source]) => {
+    const value = source ? indicatorSourceFromInstrument(source.instrument) : undefined;
+
+    return value ? [[symbol as UnderlyingSymbol, value] as const] : [];
+  });
+}
+
+function indicatorSourcesFromInstrumentMap(
+  indicatorSources: Partial<Record<UnderlyingSymbol, LiveIndicatorSourceState>>,
+) {
+  return Object.fromEntries(indicatorsSourcesEntries(indicatorSources)) as Partial<
+    Record<UnderlyingSymbol, IndicatorSourceInstrument>
+  >;
 }
 
 function liveUnderlyingFromState({
@@ -510,6 +700,18 @@ function previousDayFromTick(tick: MarketTick) {
     high: tick.close ?? close,
     low: tick.close ?? close,
     close,
+  };
+}
+
+function previousDayFromCandlesForFallback(candles: IndicatorCandle[]) {
+  const latest = candles.at(-1);
+
+  if (!latest) return null;
+
+  return {
+    high: latest.close,
+    low: latest.close,
+    close: latest.close,
   };
 }
 

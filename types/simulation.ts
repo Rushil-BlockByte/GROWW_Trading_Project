@@ -7,6 +7,7 @@ import type {
 } from "@/types/market";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorContext } from "@/types/indicators";
+import type { InstrumentKind } from "@/types/instruments";
 import type { OptionChainContext } from "@/types/options";
 import type { StrategyEvaluation } from "@/types/strategy";
 
@@ -85,6 +86,7 @@ export type SimulatedMarketSnapshot = {
   health: SimulatedSystemHealth;
   phase2: SimulatedPhase2Pipeline;
   phase4: IndicatorContext;
+  phase4ByUnderlying?: Partial<Record<UnderlyingSymbol, IndicatorContext>>;
   phase5: OptionChainContext;
   phase5ByUnderlying?: Partial<Record<UnderlyingSymbol, OptionChainContext>>;
   phase6: StrategyEvaluation;
@@ -101,6 +103,15 @@ export type OneMinuteCandleConfirmation = {
   message: string;
 };
 
+export type IndicatorSourceInstrument = {
+  underlying: UnderlyingSymbol;
+  exchange: string;
+  tradingsymbol: string;
+  instrumentToken: number;
+  kind: Extract<InstrumentKind, "INDEX" | "FUTURE">;
+  expiry?: string;
+};
+
 export type SimulatedPhase2Pipeline = {
   instrumentMasterCount: number;
   selectedUnderlying: UnderlyingSymbol;
@@ -113,7 +124,10 @@ export type SimulatedPhase2Pipeline = {
   trackedInstruments: number;
   dataQuality: DataQualityStatus;
   latestTickToken?: number;
+  indicatorSource?: IndicatorSourceInstrument;
+  indicatorSources?: Partial<Record<UnderlyingSymbol, IndicatorSourceInstrument>>;
   activeCandles: MarketCandleData[];
   completedCandleCount: number;
   candleConfirmation?: OneMinuteCandleConfirmation;
+  candleConfirmations?: Partial<Record<UnderlyingSymbol, OneMinuteCandleConfirmation>>;
 };

@@ -9,6 +9,12 @@ const UNDERLYING_TOKENS: Record<UnderlyingSymbol, number> = {
   FINNIFTY: 257801,
 };
 
+const FUTURE_TOKENS: Record<UnderlyingSymbol, number> = {
+  NIFTY: 500001,
+  BANKNIFTY: 500002,
+  FINNIFTY: 500003,
+};
+
 const UNDERLYING_LABELS: Record<UnderlyingSymbol, string> = {
   NIFTY: "NIFTY 50",
   BANKNIFTY: "BANKNIFTY",
@@ -31,6 +37,10 @@ function optionSymbol(symbol: UnderlyingSymbol, strike: number, type: "CE" | "PE
   return `${symbol}26SEP${strike}${type}`;
 }
 
+function futureSymbol(symbol: UnderlyingSymbol) {
+  return `${symbol}26SEPFUT`;
+}
+
 export function createSimulatedInstrumentMaster(): InstrumentRecord[] {
   const underlyings = Object.entries(UNDERLYING_TOKENS).map(([symbol, token]) => {
     const underlyingSymbol = symbol as UnderlyingSymbol;
@@ -45,6 +55,24 @@ export function createSimulatedInstrumentMaster(): InstrumentRecord[] {
       lotSize: 0,
       tickSize: "0.05",
       kind: "INDEX" as const,
+      underlyingSymbol,
+    };
+  });
+
+  const futures = Object.entries(FUTURE_TOKENS).map(([symbol, token]) => {
+    const underlyingSymbol = symbol as UnderlyingSymbol;
+
+    return {
+      exchange: "NFO",
+      tradingsymbol: futureSymbol(underlyingSymbol),
+      instrumentToken: token,
+      name: underlyingSymbol,
+      expiry: EXPIRY,
+      instrumentType: "FUT",
+      segment: "NFO-FUT",
+      lotSize: underlyingSymbol === "BANKNIFTY" ? 35 : 75,
+      tickSize: "0.05",
+      kind: "FUTURE" as const,
       underlyingSymbol,
     };
   });
@@ -75,7 +103,7 @@ export function createSimulatedInstrumentMaster(): InstrumentRecord[] {
     );
   });
 
-  return [...underlyings, ...options];
+  return [...underlyings, ...futures, ...options];
 }
 
 export function getSimulatedExpiry() {
