@@ -62,6 +62,12 @@ function maybeDecimal(value: Decimal.Value | null | undefined) {
   return toDecimal(value);
 }
 
+function isZero(value: Decimal.Value | null | undefined) {
+  const decimal = maybeDecimal(value);
+
+  return Boolean(decimal?.eq(0));
+}
+
 function component({
   key,
   status,
@@ -131,6 +137,13 @@ function determineBias(indicator: IndicatorContext): StrategyBias {
   return "NEUTRAL";
 }
 
+function directionalHintFromIndicators(indicator: IndicatorContext): StrategyBias {
+  if (indicator.emaTrend === "Bullish") return "BULLISH";
+  if (indicator.emaTrend === "Bearish") return "BEARISH";
+
+  return "NEUTRAL";
+}
+
 function watchedLevelForBias(
   indicator: IndicatorContext,
   bias: StrategyBias,
@@ -160,7 +173,7 @@ function directionFromState(bias: StrategyBias, confirmed: boolean): StrategyDir
   return bias;
 }
 
-function scoreTrend(indicator: IndicatorContext, bias: StrategyBias) {
+function scoreTrend(indicator: IndicatorContext) {
   if (indicator.emaTrend === "Insufficient data") {
     return component({
       key: "trend",
@@ -170,7 +183,7 @@ function scoreTrend(indicator: IndicatorContext, bias: StrategyBias) {
     });
   }
 
-  if (bias === "BULLISH" && indicator.emaTrend === "Bullish") {
+  if (indicator.emaTrend === "Bullish") {
     return component({
       key: "trend",
       status: "PASS",
@@ -179,7 +192,7 @@ function scoreTrend(indicator: IndicatorContext, bias: StrategyBias) {
     });
   }
 
-  if (bias === "BEARISH" && indicator.emaTrend === "Bearish") {
+  if (indicator.emaTrend === "Bearish") {
     return component({
       key: "trend",
       status: "PASS",
@@ -192,7 +205,7 @@ function scoreTrend(indicator: IndicatorContext, bias: StrategyBias) {
     key: "trend",
     status: "FAIL",
     points: 0,
-    detail: `EMA structure is ${indicator.emaTrend.toLowerCase()}.`,
+    detail: "EMA structure is mixed.",
   });
 }
 
@@ -201,11 +214,15 @@ function scoreVwap(indicator: IndicatorContext, bias: StrategyBias) {
   const vwap = maybeDecimal(indicator.vwap);
 
   if (!latestClose || !vwap) {
+    const detail = isZero(indicator.volumeAverage20)
+      ? "Spot index feed has no traded volume, so exact VWAP is unavailable."
+      : "VWAP is not ready.";
+
     return component({
       key: "vwap",
       status: "PENDING",
       points: 0,
-      detail: "VWAP is not ready.",
+      detail,
     });
   }
 
@@ -305,11 +322,15 @@ function scoreVolume(indicator: IndicatorContext) {
   const relativeVolume = maybeDecimal(indicator.relativeVolume20);
 
   if (!relativeVolume) {
+    const detail = isZero(indicator.volumeAverage20)
+      ? "Spot index feed has no traded volume, so relative volume cannot be calculated."
+      : "Relative volume is still building.";
+
     return component({
       key: "volume",
       status: "PENDING",
       points: 0,
-      detail: "Relative volume is still building.",
+      detail,
     });
   }
 
@@ -728,14 +749,15 @@ export function evaluateVwapBreakoutStrategy({
   }
 
   const bias = determineBias(indicator);
+  const indicatorBias = bias === "NEUTRAL" ? directionalHintFromIndicators(indicator) : bias;
   const watchedLevel = watchedLevelForBias(indicator, bias);
   const selectedContract = selectContract(optionContext, bias);
-  const trend = scoreTrend(indicator, bias);
+  const trend = scoreTrend(indicator);
   const vwap = scoreVwap(indicator, bias);
   const breakout = scoreBreakout({ indicator, bias, watchedLevel });
   const volume = scoreVolume(indicator);
-  const momentum = scoreMomentum(indicator, bias);
-  const optionChain = scoreOptionChain(optionContext, bias);
+  const momentum = scoreMomentum(indicator, indicatorBias);
+  const optionChain = scoreOptionChain(optionContext, indicatorBias);
   const liquidity = scoreLiquidity(selectedContract, bias);
   const riskReward = estimateRiskReward({
     indicator,

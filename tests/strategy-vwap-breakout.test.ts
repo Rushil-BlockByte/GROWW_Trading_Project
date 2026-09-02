@@ -206,6 +206,41 @@ describe("VWAP breakout strategy", () => {
     expect(result.entryPlan).toBeNull();
   });
 
+  it("scores available indicators without confirming a trade when VWAP is unavailable", () => {
+    const result = evaluate({
+      latestClose: "97.00",
+      vwap: null,
+      vwapDistance: null,
+      ema9: "97.00",
+      ema20: "99.00",
+      ema50: "101.00",
+      emaTrend: "Bearish",
+      rsi14: "48.00",
+      volumeAverage20: "0.00",
+      relativeVolume20: null,
+    });
+
+    expect(result.bias).toBe("NEUTRAL");
+    expect(result.direction).toBe("NO TRADE");
+    expect(result.state).toBe("FORMING");
+    expect(result.score).toBeGreaterThan(0);
+    expect(result.components.find((item) => item.key === "trend")).toMatchObject({
+      status: "PASS",
+      points: 20,
+    });
+    expect(result.components.find((item) => item.key === "vwap")).toMatchObject({
+      status: "PENDING",
+      points: 0,
+      detail: "Spot index feed has no traded volume, so exact VWAP is unavailable.",
+    });
+    expect(result.components.find((item) => item.key === "volume")).toMatchObject({
+      status: "PENDING",
+      points: 0,
+      detail: "Spot index feed has no traded volume, so relative volume cannot be calculated.",
+    });
+    expect(result.entryPlan).toBeNull();
+  });
+
   it("invalidates the setup when market data quality is not good", () => {
     const result = evaluateVwapBreakoutStrategy({
       indicator: indicator(),

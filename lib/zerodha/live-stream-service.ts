@@ -461,7 +461,7 @@ const globalForKite = globalThis as unknown as {
   liveKiteStreamService?: LiveKiteStreamService;
   liveKiteStreamServiceVersion?: string;
 };
-const LIVE_KITE_STREAM_SERVICE_VERSION = "2026-09-02-candle-confirmation";
+const LIVE_KITE_STREAM_SERVICE_VERSION = "2026-09-02-index-volume-reason";
 
 export function getLiveKiteStreamService() {
   if (
