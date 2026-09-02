@@ -133,8 +133,8 @@ describe("live market snapshot", () => {
     expect(snapshot?.phase5.rowCount).toBe(11);
     expect(snapshot?.phase5ByUnderlying?.BANKNIFTY?.rowCount).toBe(11);
     expect(snapshot?.phase5ByUnderlying?.FINNIFTY?.rowCount).toBe(11);
-    expect(snapshot?.phase2.candleConfirmation.status).toBe("BUILDING");
-    expect(snapshot?.phase2.candleConfirmation.decisionReady).toBe(false);
+    expect(snapshot?.phase2.candleConfirmation?.status).toBe("BUILDING");
+    expect(snapshot?.phase2.candleConfirmation?.decisionReady).toBe(false);
     expect(snapshot?.phase4.candleCount).toBe(0);
   });
 
@@ -190,9 +190,9 @@ describe("live market snapshot", () => {
       generatedAt: secondTickAt,
     });
 
-    expect(snapshot?.phase2.candleConfirmation.status).toBe("BUILDING");
-    expect(snapshot?.phase2.candleConfirmation.decisionReady).toBe(true);
-    expect(snapshot?.phase2.candleConfirmation.lastCompletedCandleEnd).toBe(
+    expect(snapshot?.phase2.candleConfirmation?.status).toBe("BUILDING");
+    expect(snapshot?.phase2.candleConfirmation?.decisionReady).toBe(true);
+    expect(snapshot?.phase2.candleConfirmation?.lastCompletedCandleEnd).toBe(
       "2026-09-01T04:01:00.000Z",
     );
     expect(snapshot?.phase4.candleCount).toBe(1);

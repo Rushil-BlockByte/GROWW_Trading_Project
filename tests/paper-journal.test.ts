@@ -65,7 +65,12 @@ describe("paper-trade journal", () => {
       phase2: {
         ...snapshot.phase2,
         candleConfirmation: {
-          ...snapshot.phase2.candleConfirmation,
+          status: "BUILDING",
+          currentCandleStart: "2026-09-01T04:30:00.000Z",
+          currentCandleEnd: "2026-09-01T04:31:00.000Z",
+          lastCompletedCandleStart: null,
+          lastCompletedCandleEnd: null,
+          nextConfirmationTime: "2026-09-01T04:31:00.000Z",
           decisionReady: false,
           message: "Wait for the first 1-minute candle to close before taking a paper trade.",
         },
@@ -75,6 +80,22 @@ describe("paper-trade journal", () => {
     expect(guard.allowed).toBe(false);
     expect(guard.reason).toBe(
       "Wait for the first 1-minute candle to close before taking a paper trade.",
+    );
+  });
+
+  it("blocks paper-trade capture when candle confirmation is missing", () => {
+    const snapshot = confirmedSnapshot();
+    const guard = canCreatePaperTrade({
+      ...snapshot,
+      phase2: {
+        ...snapshot.phase2,
+        candleConfirmation: undefined,
+      },
+    });
+
+    expect(guard.allowed).toBe(false);
+    expect(guard.reason).toBe(
+      "Restart the stream once so candle-close confirmation is available.",
     );
   });
 

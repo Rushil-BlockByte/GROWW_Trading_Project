@@ -269,7 +269,7 @@ function emaTrendVariant(trend: SimulatedMarketSnapshot["phase4"]["emaTrend"]) {
 }
 
 function candleConfirmationVariant(
-  status: SimulatedMarketSnapshot["phase2"]["candleConfirmation"]["status"],
+  status: NonNullable<SimulatedMarketSnapshot["phase2"]["candleConfirmation"]>["status"],
 ) {
   if (status === "CONFIRMED") return "success" as const;
   if (status === "BUILDING") return "warning" as const;
@@ -277,7 +277,7 @@ function candleConfirmationVariant(
 }
 
 function candleConfirmationLabel(
-  status: SimulatedMarketSnapshot["phase2"]["candleConfirmation"]["status"],
+  status: NonNullable<SimulatedMarketSnapshot["phase2"]["candleConfirmation"]>["status"],
 ) {
   if (status === "CONFIRMED") return "Closed";
   if (status === "BUILDING") return "Building";
@@ -1994,7 +1994,17 @@ function PaperJournalEntryRow({ entry }: { entry: PaperJournalEntry }) {
 function IndicatorContextPanel({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   const indicator = snapshot.phase4;
   const openingRange = indicator.openingRange15;
-  const candleConfirmation = snapshot.phase2.candleConfirmation;
+  const candleConfirmation = snapshot.phase2.candleConfirmation ?? {
+    status: "WAITING_FOR_TICK" as const,
+    currentCandleStart: null,
+    currentCandleEnd: null,
+    lastCompletedCandleStart: null,
+    lastCompletedCandleEnd: null,
+    nextConfirmationTime: null,
+    decisionReady: false,
+    message:
+      "Candle confirmation is missing from this live snapshot. Restart the stream once to restore exact 1-minute close timing.",
+  };
 
   return (
     <Card>

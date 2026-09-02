@@ -115,5 +115,5 @@ export type SimulatedPhase2Pipeline = {
   latestTickToken?: number;
   activeCandles: MarketCandleData[];
   completedCandleCount: number;
-  candleConfirmation: OneMinuteCandleConfirmation;
+  candleConfirmation?: OneMinuteCandleConfirmation;
 };

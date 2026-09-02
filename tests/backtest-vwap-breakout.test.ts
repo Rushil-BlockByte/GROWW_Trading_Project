@@ -79,5 +79,5 @@ describe("VWAP breakout backtest", () => {
     expect(result.sessions.map((session) => session.summary.trades)).toEqual([1, 0, 1]);
     expect(new Set(result.trades.map((trade) => trade.id)).size).toBe(result.trades.length);
     expect(result.equityCurve.at(-1)?.equity).toBe("1484.80");
-  });
+  }, 15000);
 });

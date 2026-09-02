@@ -459,10 +459,21 @@ function dedupeInstruments(instruments: InstrumentRecord[]) {
 
 const globalForKite = globalThis as unknown as {
   liveKiteStreamService?: LiveKiteStreamService;
+  liveKiteStreamServiceVersion?: string;
 };
+const LIVE_KITE_STREAM_SERVICE_VERSION = "2026-09-02-candle-confirmation";
 
 export function getLiveKiteStreamService() {
+  if (
+    globalForKite.liveKiteStreamService &&
+    globalForKite.liveKiteStreamServiceVersion !== LIVE_KITE_STREAM_SERVICE_VERSION
+  ) {
+    void globalForKite.liveKiteStreamService.stop().catch(() => undefined);
+    globalForKite.liveKiteStreamService = undefined;
+  }
+
   globalForKite.liveKiteStreamService ??= new LiveKiteStreamService();
+  globalForKite.liveKiteStreamServiceVersion = LIVE_KITE_STREAM_SERVICE_VERSION;
 
   return globalForKite.liveKiteStreamService;
 }

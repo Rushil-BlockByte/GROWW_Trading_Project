@@ -106,6 +106,13 @@ export function canCreatePaperTrade(snapshot: SimulatedMarketSnapshot): PaperTra
     };
   }
 
+  if (!snapshot.phase2.candleConfirmation) {
+    return {
+      allowed: false,
+      reason: "Restart the stream once so candle-close confirmation is available.",
+    };
+  }
+
   if (!snapshot.phase2.candleConfirmation.decisionReady) {
     return {
       allowed: false,
