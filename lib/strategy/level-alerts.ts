@@ -28,7 +28,7 @@ export const DEFAULT_LEVEL_ALERT_PARAMS: LevelAlertParams = {
   nearDistance: 20,
   touchBuffer: 12,
   breakBuffer: 15,
-  stop: 30,
+  stop: 25, // matches the tested flip default (target ~40 / stop 25)
 };
 
 function nextLevelBeyond(levels: SrLevel[], from: number, direction: "up" | "down"): number | null {

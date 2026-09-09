@@ -33,7 +33,7 @@ describe("level alerts", () => {
 
     expect(alert.stage).toBe("ABC_FORMING");
     expect(alert.direction).toBe("LONG");
-    expect(alert.plan).toMatchObject({ entry: 130, stop: 70 });
+    expect(alert.plan).toMatchObject({ entry: 130, stop: 75 });
   });
 
   it("fires ABC_FORMING SHORT when a held resistance prints a lower-high", () => {
@@ -47,7 +47,7 @@ describe("level alerts", () => {
 
     expect(alert.stage).toBe("ABC_FORMING");
     expect(alert.direction).toBe("SHORT");
-    expect(alert.plan).toMatchObject({ entry: 70, stop: 130 });
+    expect(alert.plan).toMatchObject({ entry: 70, stop: 125 });
   });
 
   it("fires BROKEN then RETEST_CONFIRMED on a resistance breakout", () => {
@@ -68,6 +68,6 @@ describe("level alerts", () => {
     });
     expect(retest.stage).toBe("RETEST_CONFIRMED");
     expect(retest.direction).toBe("LONG");
-    expect(retest.plan).toMatchObject({ entry: 100, stop: 70 });
+    expect(retest.plan).toMatchObject({ entry: 100, stop: 75 });
   });
 });

@@ -24,8 +24,10 @@ export const DEFAULT_SR_FLIP_PARAMS: SrFlipParams = {
   breakBuffer: 15,
   retestBars: 26,
   touchBuffer: 12,
-  target: 50,
-  stop: 30,
+  // Target 40 / stop 25 tested best over 5 years: 76% win vs 67% at the same
+  // expectancy (a closer target is hit more reliably before it stalls).
+  target: 40,
+  stop: 25,
   holdBars: 26,
 };
 

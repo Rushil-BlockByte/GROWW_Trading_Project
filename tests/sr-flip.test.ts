@@ -33,10 +33,10 @@ describe("sr-flip backtest core", () => {
     expect(trades[0]).toMatchObject({
       direction: "LONG",
       entry: 100,
-      target: 150,
-      stop: 70,
+      target: 140,
+      stop: 75,
       outcome: "TARGET",
-      pnl: 50,
+      pnl: 40,
     });
   });
 
@@ -78,7 +78,7 @@ describe("sr-flip live signal", () => {
     expect(result.direction).toBe("LONG");
     expect(result.state).toBe("CONFIRMED");
     expect(result.quality).toBe("READY");
-    expect(result.plan).toMatchObject({ entry: 100, stop: 70, target: 150 });
+    expect(result.plan).toMatchObject({ entry: 100, stop: 75, target: 140 });
   });
 
   it("flags AWAITING_RETEST when broken but price is still away", () => {
@@ -105,7 +105,7 @@ describe("sr-flip helpers", () => {
   });
 
   it("exposes deterministic default parameters", () => {
-    expect(DEFAULT_SR_FLIP_PARAMS.target).toBe(50);
-    expect(DEFAULT_SR_FLIP_PARAMS.stop).toBe(30);
+    expect(DEFAULT_SR_FLIP_PARAMS.target).toBe(40);
+    expect(DEFAULT_SR_FLIP_PARAMS.stop).toBe(25);
   });
 });
