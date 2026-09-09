@@ -174,7 +174,7 @@ export function buildLiveMarketSnapshot({
     });
   const srReferencePrice =
     numberFromDecimal(niftyState.state.latestTick.lastPrice) ?? 0;
-  const srSessionBars = fifteenMinuteBars(
+  const srSessionBars = fiveMinuteBars(
     liveOneMinuteMarketCandles({
       candleBuilder,
       instrumentToken: niftyState.instrument.instrumentToken,
@@ -535,16 +535,19 @@ function liveOneMinuteMarketCandles({
   );
 }
 
-function fifteenMinuteBars(oneMinute: MarketCandleData[]): LevelCandle[] {
+/**
+ * Aggregate 1-minute candles into CLOSED 5-minute candles. Only complete groups
+ * of five are emitted, so the forming (not-yet-closed) 5-minute candle is
+ * dropped — levels and pattern detection wait for the 5-minute candle to close.
+ */
+function fiveMinuteBars(oneMinute: MarketCandleData[]): LevelCandle[] {
   const sorted = [...oneMinute].sort(
     (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
   );
   const bars: LevelCandle[] = [];
 
-  for (let index = 0; index < sorted.length; index += 15) {
-    const group = sorted.slice(index, index + 15);
-
-    if (group.length === 0) continue;
+  for (let index = 0; index + 5 <= sorted.length; index += 5) {
+    const group = sorted.slice(index, index + 5);
 
     bars.push({
       startTime: group[0].startTime,

@@ -28,7 +28,7 @@ import type { SimulatedMarketSnapshot } from "@/types/simulation";
 
 const LIVE_OPTION_STRIKE_WINDOW = 5;
 const INDICATOR_WARMUP_DAYS = 7;
-const SR_LEVEL_HISTORY_DAYS = 180;
+const SR_LEVEL_HISTORY_DAYS = 90; // ~90 days of 5-min fits one Kite request
 const INDIA_VIX_TOKEN = 264969;
 const SR_LEVEL_PARAMS = { pivot: 3, clusterPoints: 20, minTouches: 5 };
 
@@ -228,7 +228,7 @@ export class LiveKiteStreamService {
   }
 
   /**
-   * Seed the fixed session support/resistance levels from ~180 days of 15-min
+   * Seed the fixed session support/resistance levels from ~90 days of 5-min
    * index history (levels stay constant for the session), plus the latest
    * India VIX for the regime/window. Failures degrade to empty levels.
    */
@@ -255,7 +255,7 @@ export class LiveKiteStreamService {
             apiKey,
             accessToken,
             instrumentToken: index.instrumentToken,
-            interval: "15minute",
+            interval: "5minute",
             from,
             to,
             continuous: false,
