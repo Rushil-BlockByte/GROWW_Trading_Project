@@ -16,29 +16,30 @@ function signed(value: string) {
 export function explainScannerSnapshot(snapshot: SimulatedMarketSnapshot): TradingExplanation {
   const signal = snapshot.phase6;
   const noTrade = signal.direction === "NO TRADE";
-  const blockedComponents = signal.components
-    .filter((component) => component.status === "FAIL")
-    .map((component) => `${component.label}: ${component.detail}`);
-  const strengths = signal.components
-    .filter((component) => component.status === "PASS")
-    .slice(0, 4)
-    .map((component) => `${component.label}: ${component.detail}`);
-  const cautions = [
-    ...blockedComponents,
-    ...snapshot.signal.risks,
-  ].slice(0, 6);
+  const strengths: string[] = [];
+
+  if (signal.nearestResistance) {
+    strengths.push(`Resistance ${signal.nearestResistance.price} (${signal.nearestResistance.touches} touches).`);
+  }
+  if (signal.nearestSupport) {
+    strengths.push(`Support ${signal.nearestSupport.price} (${signal.nearestSupport.touches} touches).`);
+  }
+
+  const cautions = [...signal.reasons, ...snapshot.signal.risks].slice(0, 6);
 
   return {
-    headline: noTrade ? "No trade is the correct state right now." : "A paper setup is forming.",
-    verdict: noTrade ? "no_trade" : signal.score >= 75 ? "positive" : "watch",
+    headline: noTrade
+      ? "No break-and-retest setup right now."
+      : `A ${signal.direction} flip setup is ${signal.state === "CONFIRMED" ? "confirmed" : "forming"}.`,
+    verdict: noTrade ? "no_trade" : signal.state === "CONFIRMED" ? "positive" : "watch",
     summary: noTrade
-      ? `The scanner score is ${signal.score}/100, but one or more hard gates still block a trade.`
-      : `The scanner has a ${signal.direction} bias with a ${signal.score}/100 score and ${signal.quality.toLowerCase()} quality.`,
-    strengths: strengths.length ? strengths : ["No strong component has passed yet."],
-    cautions: cautions.length ? cautions : ["Keep watching for stale data, spread expansion, and failed follow-through."],
+      ? `Price sits between support and resistance with no broken level to retest (VIX regime ${signal.vixRegime}).`
+      : `A level broke and price is ${signal.state === "CONFIRMED" ? "retesting it now" : "expected to retest it"}; plan enter ${signal.plan?.entry}, stop ${signal.plan?.stop}, target ${signal.plan?.target}.`,
+    strengths: strengths.length ? strengths : ["No strong nearby level yet."],
+    cautions: cautions.length ? cautions : ["Keep watching for stale data and levels failing to hold."],
     nextSteps: noTrade
-      ? ["Wait for all hard gates to pass.", "Keep the setup in paper-only review.", "Do not force a trade while the direction is NO TRADE."]
-      : ["Verify liquidity again before journaling.", "Check the invalidation level.", "Capture only a paper trade unless live execution is explicitly built later."],
+      ? ["Wait for a level to break and retest.", "Keep the setup in paper-only review.", "Do not force a trade while the direction is NO TRADE."]
+      : ["Confirm the retest holds before journaling.", "Respect the stop beyond the level.", "Capture only a paper trade unless live execution is explicitly built later."],
     changed: [
       `Signal state is ${snapshot.signal.state}.`,
       `Data quality is ${snapshot.health.dataQuality.replace("_", " ")}.`,

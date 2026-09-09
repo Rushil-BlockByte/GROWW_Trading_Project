@@ -6,6 +6,7 @@ import type {
   OptionLegLiquidity,
   OptionSide,
 } from "@/types/options";
+import { selectStrategyContract } from "@/lib/options/contract-selection";
 import type {
   StrategyBias,
   StrategyComponentKey,
@@ -14,6 +15,7 @@ import type {
   StrategyDirection,
   StrategyEntryPlan,
   StrategyEvaluation,
+  StrategyGate,
   StrategySelectedContract,
   StrategyWatchedLevel,
 } from "@/types/strategy";
@@ -471,40 +473,6 @@ function scoreOptionChain(optionContext: OptionChainContext, bias: StrategyBias)
   });
 }
 
-function getLegForSide(row: OptionChainContext["rows"][number], side: OptionSide) {
-  return side === "CE" ? row.call : row.put;
-}
-
-function selectContract(
-  optionContext: OptionChainContext,
-  bias: StrategyBias,
-): StrategySelectedContract | null {
-  if (bias === "NEUTRAL") return null;
-
-  const side: OptionSide = bias === "BULLISH" ? "CE" : "PE";
-  const spot = toDecimal(optionContext.underlyingLastPrice);
-  const candidates = optionContext.rows
-    .map((row) => getLegForSide(row, side))
-    .filter((leg) => leg.status === "TRADABLE")
-    .sort((a, b) =>
-      toDecimal(a.strike).minus(spot).abs().minus(toDecimal(b.strike).minus(spot).abs()).toNumber(),
-    );
-  const selected = candidates[0];
-
-  if (!selected) {
-    return null;
-  }
-
-  return {
-    side,
-    strike: selected.strike,
-    label: `${optionContext.underlying} ${optionContext.expiry} ${selected.strike} ${side}`,
-    ltp: toFixed(selected.ltp),
-    status: selected.status,
-    reason: selected.reasons[0] ?? "Nearest liquid contract.",
-  };
-}
-
 function scoreLiquidity(selectedContract: StrategySelectedContract | null, bias: StrategyBias) {
   if (bias === "NEUTRAL") {
     return component({
@@ -620,7 +588,14 @@ function estimateRiskReward({
   };
 }
 
-function isConfirmed({
+export const CONFIRMATION_MIN_SCORE = 75;
+
+/**
+ * The hard gates that must all pass before the scanner will approve a trade.
+ * Returning them as structured data lets the UI show exactly what is blocking a
+ * NO TRADE. When every gate passes, the setup is confirmed.
+ */
+function buildGates({
   bias,
   score,
   dataQuality,
@@ -632,20 +607,67 @@ function isConfirmed({
   dataQuality: DataQualityStatus;
   marketRegime: MarketRegime;
   components: StrategyComponentScore[];
-}) {
-  const statusByKey = new Map(components.map((item) => [item.key, item.status]));
+}): StrategyGate[] {
+  const byKey = new Map(components.map((item) => [item.key, item]));
   const disallowedRegime = marketRegime === "SIDEWAYS" || marketRegime === "HIGH_VOLATILITY";
+  const breakout = byKey.get("breakout");
+  const liquidity = byKey.get("liquidity");
+  const riskReward = byKey.get("risk_reward");
+  const optionChain = byKey.get("option_chain");
 
-  return (
-    bias !== "NEUTRAL" &&
-    score >= 75 &&
-    dataQuality === "GOOD" &&
-    !disallowedRegime &&
-    statusByKey.get("breakout") === "PASS" &&
-    statusByKey.get("liquidity") === "PASS" &&
-    statusByKey.get("risk_reward") === "PASS" &&
-    statusByKey.get("option_chain") !== "FAIL"
-  );
+  return [
+    {
+      key: "score",
+      label: `Setup score at least ${CONFIRMATION_MIN_SCORE}`,
+      passed: score >= CONFIRMATION_MIN_SCORE,
+      detail: `Score is ${score}/100.`,
+    },
+    {
+      key: "data_quality",
+      label: "Data quality is good",
+      passed: dataQuality === "GOOD",
+      detail: `Data quality is ${dataQuality.replace("_", " ")}.`,
+    },
+    {
+      key: "market_regime",
+      label: "Regime is tradable",
+      passed: !disallowedRegime,
+      detail: `Market regime is ${marketRegime.replace("_", " ").toLowerCase()}.`,
+    },
+    {
+      key: "directional_bias",
+      label: "Directional bias exists",
+      passed: bias !== "NEUTRAL",
+      detail:
+        bias === "NEUTRAL"
+          ? "Price, VWAP, and EMA structure do not agree on a side."
+          : `${bias.charAt(0)}${bias.slice(1).toLowerCase()} bias.`,
+    },
+    {
+      key: "breakout",
+      label: "Breakout confirmed by candle close",
+      passed: breakout?.status === "PASS",
+      detail: breakout?.detail ?? "Breakout is not ready.",
+    },
+    {
+      key: "liquidity",
+      label: "Liquid contract available",
+      passed: liquidity?.status === "PASS",
+      detail: liquidity?.detail ?? "No liquid contract on the setup side.",
+    },
+    {
+      key: "risk_reward",
+      label: "Risk/reward meets minimum",
+      passed: riskReward?.status === "PASS",
+      detail: riskReward?.detail ?? "Risk/reward is not ready.",
+    },
+    {
+      key: "option_chain",
+      label: "Option chain does not conflict",
+      passed: optionChain?.status !== "FAIL",
+      detail: optionChain?.detail ?? "Option chain is not ready.",
+    },
+  ];
 }
 
 function buildReasons(components: StrategyComponentScore[], confirmed: boolean) {
@@ -705,6 +727,13 @@ function invalidatedEvaluation({
       detail: "Waiting for valid market data.",
     }),
   );
+  const gates = buildGates({
+    bias: "NEUTRAL",
+    score: 0,
+    dataQuality,
+    marketRegime,
+    components,
+  });
 
   return {
     id: `VWAP_BREAKOUT-${indicator.underlying}-${optionContext.expiry}`,
@@ -719,8 +748,10 @@ function invalidatedEvaluation({
     score: 0,
     quality: "NO SETUP",
     components,
+    gates,
     watchedLevel: null,
     selectedContract: null,
+    contractCandidates: [],
     entryPlan: null,
     reasons: [`Data quality is ${dataQuality.replace("_", " ")}.`],
     risks: buildRisks({ dataQuality, marketRegime, confirmed: false }),
@@ -751,7 +782,8 @@ export function evaluateVwapBreakoutStrategy({
   const bias = determineBias(indicator);
   const indicatorBias = bias === "NEUTRAL" ? directionalHintFromIndicators(indicator) : bias;
   const watchedLevel = watchedLevelForBias(indicator, bias);
-  const selectedContract = selectContract(optionContext, bias);
+  const { selected: selectedContract, candidates: contractCandidates } =
+    selectStrategyContract(optionContext, bias);
   const trend = scoreTrend(indicator);
   const vwap = scoreVwap(indicator, bias);
   const breakout = scoreBreakout({ indicator, bias, watchedLevel });
@@ -777,13 +809,14 @@ export function evaluateVwapBreakoutStrategy({
     riskReward.component,
   ];
   const score = components.reduce((sum, item) => sum + item.points, 0);
-  const confirmed = isConfirmed({
+  const gates = buildGates({
     bias,
     score,
     dataQuality,
     marketRegime,
     components,
   });
+  const confirmed = gates.every((gate) => gate.passed);
 
   return {
     id: `VWAP_BREAKOUT-${indicator.underlying}-${optionContext.expiry}`,
@@ -798,8 +831,10 @@ export function evaluateVwapBreakoutStrategy({
     score,
     quality: qualityFromScore(score),
     components,
+    gates,
     watchedLevel,
     selectedContract,
+    contractCandidates,
     entryPlan: riskReward.entryPlan,
     reasons: buildReasons(components, confirmed),
     risks: buildRisks({ dataQuality, marketRegime, confirmed }),

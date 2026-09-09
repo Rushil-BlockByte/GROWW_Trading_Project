@@ -13,8 +13,8 @@ describe("plain-language trading explanations", () => {
   it("explains why the scanner should stay out of a blocked trade", () => {
     const explanation = explainScannerSnapshot(createInitialMarketSnapshot());
 
-    expect(explanation.headline).toContain("No trade");
-    expect(explanation.summary).toContain("hard gates");
+    expect(explanation.headline).toContain("break-and-retest");
+    expect(explanation.summary).toContain("retest");
     expect(explanation.liveOrdersEnabled).toBe(false);
   });
 

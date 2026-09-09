@@ -191,6 +191,18 @@ describe("VWAP breakout strategy", () => {
     expect(result.selectedContract?.side).toBe("CE");
     expect(result.entryPlan?.riskReward).toBe("1.99");
     expect(result.liveOrdersEnabled).toBe(false);
+    // Every hard gate passes on a confirmed setup.
+    expect(result.gates).toHaveLength(8);
+    expect(result.gates.every((gate) => gate.passed)).toBe(true);
+  });
+
+  it("exposes the selected contract moneyness and estimated delta", () => {
+    const result = evaluate();
+
+    expect(result.selectedContract?.moneyness).toBeDefined();
+    expect(Number(result.selectedContract?.estimatedDelta)).toBeGreaterThan(0);
+    expect(result.contractCandidates.length).toBeGreaterThan(0);
+    expect(result.contractCandidates[0].strike).toBe(result.selectedContract?.strike);
   });
 
   it("keeps direction as no trade when the breakout candle is not confirmed", () => {
@@ -204,6 +216,10 @@ describe("VWAP breakout strategy", () => {
       points: 10,
     });
     expect(result.entryPlan).toBeNull();
+    // The blocking gate is surfaced explicitly.
+    const breakoutGate = result.gates.find((gate) => gate.key === "breakout");
+    expect(breakoutGate?.passed).toBe(false);
+    expect(result.gates.some((gate) => !gate.passed)).toBe(true);
   });
 
   it("scores available indicators without confirming a trade when VWAP is unavailable", () => {

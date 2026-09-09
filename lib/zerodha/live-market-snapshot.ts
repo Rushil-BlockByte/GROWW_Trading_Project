@@ -6,7 +6,9 @@ import type { MarketStateStore } from "@/lib/market/market-state";
 import { addMinutes } from "@/lib/market/session";
 import type { MarketDataProviderStatus } from "@/lib/providers/market-data-provider";
 import { buildOptionChainContext } from "@/lib/options/chain-context";
-import { evaluateVwapBreakoutStrategy } from "@/lib/strategy/vwap-breakout";
+import { evaluateSrFlipSignal } from "@/lib/strategy/sr-flip";
+import { srFlipSignalSummary } from "@/lib/strategy/sr-flip-signal";
+import type { LevelCandle, SrLevel } from "@/types/sr-flip";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorCandle, IndicatorContext } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
@@ -53,6 +55,8 @@ export type LiveMarketSnapshotInput = {
   optionUniverse?: LiveOptionUniverseSnapshot;
   optionUniverses?: LiveOptionUniversesSnapshot;
   indicatorInstruments?: Partial<Record<UnderlyingSymbol, InstrumentRecord>>;
+  srLevelsByUnderlying?: Partial<Record<UnderlyingSymbol, SrLevel[]>>;
+  indiaVix?: number | null;
   generatedAt?: Date;
 };
 
@@ -68,6 +72,8 @@ export function buildLiveMarketSnapshot({
   optionUniverse,
   optionUniverses,
   indicatorInstruments,
+  srLevelsByUnderlying,
+  indiaVix,
   generatedAt = new Date(),
 }: LiveMarketSnapshotInput): SimulatedMarketSnapshot | undefined {
   if (!repository || !stateStore || provider.connected === false) {
@@ -166,11 +172,21 @@ export function buildLiveMarketSnapshot({
         previousDayByToken?.get(selectedIndicatorToken) ??
         previousDayFromTick(selectedIndicatorSource.state?.latestTick ?? niftyState.state.latestTick),
     });
-  const phase6 = evaluateVwapBreakoutStrategy({
-    indicator: phase4,
-    optionContext: phase5,
-    marketRegime: underlyings[0]?.regime ?? "SIDEWAYS",
-    dataQuality: stateSummary.dataQuality,
+  const srReferencePrice =
+    numberFromDecimal(niftyState.state.latestTick.lastPrice) ?? 0;
+  const srSessionBars = fifteenMinuteBars(
+    liveOneMinuteMarketCandles({
+      candleBuilder,
+      instrumentToken: niftyState.instrument.instrumentToken,
+      sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
+    }),
+  );
+  const phase6 = evaluateSrFlipSignal({
+    underlying: LIVE_SELECTED_UNDERLYING,
+    levels: srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [],
+    sessionBars: srSessionBars,
+    referencePrice: srReferencePrice,
+    vix: indiaVix ?? null,
   });
 
   return {
@@ -178,26 +194,7 @@ export function buildLiveMarketSnapshot({
     underlyings,
     optionChain,
     optionChains,
-    signal: {
-      id: phase6.id,
-      underlying: phase6.underlying,
-      direction: phase6.direction,
-      setupName: phase6.name,
-      score: phase6.score,
-      quality: phase6.quality,
-      suggestedOption: phase6.selectedContract?.label,
-      entryRange: phase6.entryPlan?.entryTrigger,
-      underlyingInvalidation: phase6.entryPlan
-        ? Number(phase6.entryPlan.invalidation)
-        : undefined,
-      optionStopEstimate: phase6.entryPlan ? Number(phase6.entryPlan.invalidation) : undefined,
-      targetOne: phase6.entryPlan ? Number(phase6.entryPlan.targetOne) : undefined,
-      targetTwo: phase6.entryPlan ? Number(phase6.entryPlan.targetTwo) : undefined,
-      riskReward: phase6.entryPlan?.riskReward,
-      reasons: phase6.reasons,
-      risks: phase6.risks,
-      state: phase6.state,
-    },
+    signal: srFlipSignalSummary(phase6),
     health: {
       websocket: provider.connected
         ? "CONNECTED"
@@ -536,6 +533,28 @@ function liveOneMinuteMarketCandles({
   return Array.from(byStartTime.values()).sort(
     (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
   );
+}
+
+function fifteenMinuteBars(oneMinute: MarketCandleData[]): LevelCandle[] {
+  const sorted = [...oneMinute].sort(
+    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+  );
+  const bars: LevelCandle[] = [];
+
+  for (let index = 0; index < sorted.length; index += 15) {
+    const group = sorted.slice(index, index + 15);
+
+    if (group.length === 0) continue;
+
+    bars.push({
+      startTime: group[0].startTime,
+      high: Math.max(...group.map((candle) => Number(candle.high))),
+      low: Math.min(...group.map((candle) => Number(candle.low))),
+      close: Number(group[group.length - 1].close),
+    });
+  }
+
+  return bars;
 }
 
 function completedMarketCandleFromIndicator(

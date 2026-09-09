@@ -29,13 +29,13 @@ import {
   ShieldAlert,
   ShieldCheck,
   Target,
+  TrendingDown,
   TrendingUp,
   WifiOff,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -67,7 +67,7 @@ import {
   isPaperJournalEntry,
   MAX_PAPER_JOURNAL_ENTRIES,
   PAPER_JOURNAL_STORAGE_KEY,
-  PAPER_OPTION_STOP_PERCENT,
+  PAPER_TRADE_LOT_SIZE,
   parsePaperJournalEntries,
   serializePaperJournalEntries,
 } from "@/lib/paper-trading/journal";
@@ -106,11 +106,12 @@ import type {
   SimulatedMarketSnapshot,
   SimulatedUnderlying,
 } from "@/types/simulation";
-import type { StrategyComponentScore, StrategyComponentStatus } from "@/types/strategy";
+import type { SrFlipEvaluation, SrLevelContext } from "@/types/sr-flip";
 
 type DashboardShellProps = {
-  initialBacktestResult: BacktestResult;
-  initialMultiDayBacktestResult: MultiDayBacktestResult;
+  marketDataMode: MarketDataMode;
+  initialBacktestResult: BacktestResult | null;
+  initialMultiDayBacktestResult: MultiDayBacktestResult | null;
 };
 
 type PersistenceBadgeVariant = "success" | "warning" | "destructive" | "muted";
@@ -310,15 +311,6 @@ function dailyJournalToneVariant(tone: DailyIndexJournal["marketTone"]) {
   return "muted" as const;
 }
 
-function formatOptionTargetBand(entryPrice: string | null | undefined) {
-  if (!entryPrice) return "Waiting";
-
-  const entry = Number(entryPrice);
-  if (!Number.isFinite(entry) || entry <= 0) return "Waiting";
-
-  return `${formatInr(entry + OPTION_TARGET_MIN_POINTS)} - ${formatInr(entry + OPTION_TARGET_MAX_POINTS)}`;
-}
-
 function liquidityVariant(status: OptionLiquidityStatus) {
   return status === "TRADABLE" ? "success" as const : "destructive" as const;
 }
@@ -327,23 +319,11 @@ function formatLiquidityStatus(status: OptionLiquidityStatus) {
   return status === "TRADABLE" ? "Tradable" : "Not tradable";
 }
 
-function qualityVariant(quality: SimulatedMarketSnapshot["signal"]["quality"]) {
-  if (quality === "HIGH QUALITY" || quality === "STRONG") return "success" as const;
-  if (quality === "WATCH" || quality === "WEAK") return "warning" as const;
-  return "muted" as const;
-}
-
 function strategyStateVariant(state: SimulatedMarketSnapshot["signal"]["state"]) {
   if (state === "CONFIRMED" || state === "ACTIVE") return "success" as const;
   if (state === "FORMING") return "warning" as const;
   if (state === "INVALIDATED" || state === "STOPPED") return "destructive" as const;
   return "muted" as const;
-}
-
-function componentStatusVariant(status: StrategyComponentStatus) {
-  if (status === "PASS") return "success" as const;
-  if (status === "PARTIAL" || status === "PENDING") return "warning" as const;
-  return "destructive" as const;
 }
 
 function paperStatusVariant(status: PaperTradeJournalStatus) {
@@ -605,33 +585,24 @@ function buildLiveRiskPlan(
   snapshot: SimulatedMarketSnapshot | undefined,
   risk: typeof DEFAULT_RISK_CONFIGURATION,
 ): LiveRiskPlan | null {
-  const selectedContract = snapshot?.phase6.selectedContract;
+  const plan = snapshot?.phase6.plan;
 
-  if (!snapshot || !selectedContract) return null;
+  if (!snapshot || !plan) return null;
 
-  const optionRow = snapshot.optionChain.find((row) => row.strike === selectedContract.strike);
-  const selectedLeg = selectedContract.side === "CE" ? optionRow?.call : optionRow?.put;
-  const lotSize = selectedLeg?.lotSize;
-  const entryPrice = Number(selectedContract.ltp);
-  const stopPercent = Number(PAPER_OPTION_STOP_PERCENT);
-  const stopPrice = entryPrice - (entryPrice * stopPercent) / 100;
+  const lotSize = PAPER_TRADE_LOT_SIZE;
+  const entryPrice = plan.entry;
+  const stopPrice = plan.stop;
 
-  if (
-    !Number.isFinite(entryPrice) ||
-    entryPrice <= 0 ||
-    !Number.isFinite(stopPrice) ||
-    stopPrice <= 0 ||
-    typeof lotSize !== "number" ||
-    !Number.isInteger(lotSize) ||
-    lotSize <= 0
-  ) {
+  if (!Number.isFinite(entryPrice) || entryPrice <= 0 || !Number.isFinite(stopPrice) || stopPrice <= 0) {
     return null;
   }
 
+  const side = snapshot.phase6.direction === "LONG" ? "CE" : "PE";
+
   return {
-    contractLabel: selectedContract.label,
-    contractStatus: selectedContract.status,
-    contractReason: selectedContract.reason,
+    contractLabel: `${snapshot.phase6.underlying} ${side} level ${plan.level}`,
+    contractStatus: "TRADABLE",
+    contractReason: `Break-and-retest flip at ${plan.level} (R:R ${plan.riskReward}).`,
     entryPrice: entryPrice.toFixed(2),
     stopPrice: stopPrice.toFixed(2),
     lotSize,
@@ -646,9 +617,12 @@ function buildLiveRiskPlan(
 }
 
 export function DashboardShell({
+  marketDataMode,
   initialBacktestResult,
   initialMultiDayBacktestResult,
 }: DashboardShellProps) {
+  const showSampleBacktests =
+    marketDataMode !== "live" && initialBacktestResult !== null && initialMultiDayBacktestResult !== null;
   const [selectedUnderlying, setSelectedUnderlying] = useState<SimulatedUnderlying["symbol"]>("NIFTY");
   const [liveStatus, setLiveStatus] = useState<LiveKiteStreamSnapshot | null>(null);
   const liveSnapshot = liveStatus?.marketSnapshot;
@@ -746,15 +720,21 @@ export function DashboardShell({
           </>
         )}
 
-        <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-          <BacktestSummaryPanel result={initialBacktestResult} />
-          <MultiDayBacktestPanel result={initialMultiDayBacktestResult} />
-        </section>
+        {showSampleBacktests && initialBacktestResult && initialMultiDayBacktestResult ? (
+          <>
+            <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+              <BacktestSummaryPanel result={initialBacktestResult} />
+              <MultiDayBacktestPanel result={initialMultiDayBacktestResult} />
+            </section>
 
-        <BacktestReportsPanel
-          initialBacktestResult={initialBacktestResult}
-          initialMultiDayBacktestResult={initialMultiDayBacktestResult}
-        />
+            <BacktestReportsPanel
+              initialBacktestResult={initialBacktestResult}
+              initialMultiDayBacktestResult={initialMultiDayBacktestResult}
+            />
+          </>
+        ) : (
+          <LiveBacktestNotice />
+        )}
 
         <section className="grid gap-4 xl:grid-cols-5">
           <RiskDashboard
@@ -1060,7 +1040,7 @@ function DailyIndexJournalPanel({ snapshot }: { snapshot: SimulatedMarketSnapsho
         <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-4">
           <Metric label="Trade date" value={journal.tradeDate} />
           <Metric label="Saved" value={savedAt ? formatJournalTime(savedAt) : "Not saved"} />
-          <Metric label="Scanner" value={`${snapshot.phase6.direction} ${snapshot.phase6.score}/100`} />
+          <Metric label="Scanner" value={`${snapshot.phase6.direction} · ${snapshot.phase6.quality}`} />
           <Metric label="Option aim" value={optionTargetText} />
         </div>
 
@@ -1231,10 +1211,40 @@ function LivePaperJournalWaitingPanel({ status }: { status: LiveKiteStreamSnapsh
   );
 }
 
+function LiveBacktestNotice() {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <History className="h-5 w-5 text-accent" />
+          Backtest Replay
+        </CardTitle>
+        <CardDescription>Hidden in live mode — real data only</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="flex items-start gap-3 rounded-md border bg-muted/40 p-3 text-sm">
+          <ShieldCheck className="mt-0.5 h-5 w-5 shrink-0 text-emerald-500" />
+          <div className="grid gap-1">
+            <p className="font-semibold">Sample replays are off while live.</p>
+            <p className="text-muted-foreground">
+              The demo replay figures (fixed sample trades) are hidden in live mode so nothing on
+              screen can be mistaken for a real trade. Run a real backtest on Kite historical data
+              from the Option History panel; saved runs need a database.
+            </p>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function BacktestReportsPanel({
   initialBacktestResult,
   initialMultiDayBacktestResult,
-}: Pick<DashboardShellProps, "initialBacktestResult" | "initialMultiDayBacktestResult">) {
+}: {
+  initialBacktestResult: BacktestResult;
+  initialMultiDayBacktestResult: MultiDayBacktestResult;
+}) {
   const fallbackRecords = useMemo(
     () => [
       backtestReportRecordFromResult(
@@ -2611,13 +2621,134 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function BannerStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-background/40 px-3 py-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 font-semibold leading-snug tabular-nums">{value}</p>
+    </div>
+  );
+}
+
+function LevelRow({ level }: { level: SrLevelContext }) {
+  return (
+    <div className="flex items-center justify-between gap-3 text-sm">
+      <span className="font-semibold tabular-nums">{level.price}</span>
+      <span className="text-muted-foreground">
+        {level.distance > 0 ? "+" : ""}
+        {level.distance} pts · {level.touches} touches
+      </span>
+    </div>
+  );
+}
+
+/**
+ * Front-and-center verdict for the S/R break-and-retest flip. On a confirmed
+ * retest it shows the plan; while a level is broken it shows WATCH; otherwise it
+ * shows the nearest support/resistance to watch.
+ */
+function DecisionBanner({ strategy }: { strategy: SrFlipEvaluation }) {
+  const plan = strategy.plan;
+  const DirectionIcon = strategy.direction === "SHORT" ? TrendingDown : TrendingUp;
+
+  if (strategy.state === "CONFIRMED" && plan) {
+    return (
+      <div className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <DirectionIcon className="h-6 w-6 text-emerald-500" />
+            <div>
+              <p className="text-lg font-bold text-emerald-400">TAKE · {strategy.direction} FLIP</p>
+              <p className="text-sm text-muted-foreground">
+                Retest of {plan.level} · VIX {strategy.vixRegime}
+              </p>
+            </div>
+          </div>
+          <Badge variant="outline" className="border-emerald-500/50 text-emerald-400">
+            {strategy.quality}
+          </Badge>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <BannerStat label="Entry" value={String(plan.entry)} />
+          <BannerStat label="Stop" value={String(plan.stop)} />
+          <BannerStat label="Target" value={String(plan.target)} />
+          <BannerStat label="Risk/Reward" value={plan.riskReward} />
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Paper-only. Live orders are disabled. Confirm the retest holds before capturing.
+        </p>
+      </div>
+    );
+  }
+
+  if (strategy.state === "AWAITING_RETEST" && plan) {
+    return (
+      <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
+        <div className="flex items-center gap-2">
+          <DirectionIcon className="h-6 w-6 text-amber-500" />
+          <div>
+            <p className="text-lg font-bold text-amber-400">WATCH · {strategy.direction} FLIP FORMING</p>
+            <p className="text-sm text-muted-foreground">
+              {plan.level} broke — waiting for a pullback to retest it.
+            </p>
+          </div>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          <BannerStat label="Level" value={String(plan.level)} />
+          <BannerStat label="Entry" value={String(plan.entry)} />
+          <BannerStat label="Stop" value={String(plan.stop)} />
+          <BannerStat label="Target" value={String(plan.target)} />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-lg border bg-muted/40 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="h-6 w-6 text-amber-500" />
+          <div>
+            <p className="text-lg font-bold">NO TRADE</p>
+            <p className="text-sm text-muted-foreground">
+              No broken level to retest · VIX {strategy.vixRegime} · price {strategy.referencePrice}
+            </p>
+          </div>
+        </div>
+        <Badge variant="outline">{strategy.quality}</Badge>
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="rounded-md border bg-background/40 p-3">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Resistance above
+          </p>
+          {strategy.resistances.slice(0, 3).map((level) => (
+            <LevelRow key={level.price} level={level} />
+          ))}
+          {strategy.resistances.length === 0 ? (
+            <p className="text-sm text-muted-foreground">None nearby</p>
+          ) : null}
+        </div>
+        <div className="rounded-md border bg-background/40 p-3">
+          <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Support below
+          </p>
+          {strategy.supports.slice(0, 3).map((level) => (
+            <LevelRow key={level.price} level={level} />
+          ))}
+          {strategy.supports.length === 0 ? (
+            <p className="text-sm text-muted-foreground">None nearby</p>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   const strategy = snapshot.phase6;
-  const watchedOption = strategy.selectedContract?.label ?? "None";
-  const optionTargetBand = formatOptionTargetBand(strategy.selectedContract?.ltp);
-  const watchedLevel = strategy.watchedLevel
-    ? `${strategy.watchedLevel.label} ${formatIndicator(strategy.watchedLevel.value)}`
-    : "None";
 
   return (
     <Card>
@@ -2628,36 +2759,31 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
               <Gauge className="h-5 w-5 text-accent" />
               Opportunity Scanner
             </CardTitle>
-            <CardDescription>{snapshot.signal.setupName}</CardDescription>
+            <CardDescription>{strategy.name}</CardDescription>
           </div>
           <div className="flex flex-col items-end gap-2">
             <Badge variant={strategyStateVariant(snapshot.signal.state)}>
               {snapshot.signal.direction}
             </Badge>
-            <Badge variant={qualityVariant(strategy.quality)}>{strategy.quality}</Badge>
+            <Badge variant="outline">{strategy.state.replace(/_/g, " ")}</Badge>
           </div>
         </div>
       </CardHeader>
       <CardContent className="grid gap-4">
-        <div className="grid gap-2">
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-sm font-medium">Setup score</span>
-            <span className="text-lg font-semibold tabular-nums">{strategy.score}/100</span>
-          </div>
-          <Progress value={strategy.score} />
-          <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
-            <Metric label="Bias" value={strategy.bias} />
-            <Metric label="State" value={strategy.state.replace("_", " ")} />
-            <Metric label="Confirmed" value={strategy.direction === "NO TRADE" ? "No" : "Yes"} />
-            <Metric label="Version" value={strategy.version} />
-          </div>
+        <DecisionBanner strategy={strategy} />
+
+        <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
+          <Metric label="Direction" value={strategy.direction} />
+          <Metric label="State" value={strategy.state.replace(/_/g, " ")} />
+          <Metric label="VIX regime" value={strategy.vixRegime} />
+          <Metric label="Reference" value={String(strategy.referencePrice)} />
         </div>
 
         <div className="grid gap-3 md:grid-cols-2">
           <div className="rounded-md border p-3">
             <p className="mb-2 text-sm font-semibold">Reasons</p>
             <ul className="grid gap-2 text-sm text-muted-foreground">
-              {snapshot.signal.reasons.map((reason) => (
+              {strategy.reasons.map((reason) => (
                 <li key={reason}>{reason}</li>
               ))}
             </ul>
@@ -2665,75 +2791,39 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
           <div className="rounded-md border p-3">
             <p className="mb-2 text-sm font-semibold">Risks</p>
             <ul className="grid gap-2 text-sm text-muted-foreground">
-              {snapshot.signal.risks.map((risk) => (
+              {strategy.risks.map((risk) => (
                 <li key={risk}>{risk}</li>
               ))}
             </ul>
           </div>
         </div>
 
-        <StrategyComponentBreakdown components={strategy.components} />
-
-        <div className="grid gap-2 rounded-md border bg-muted/40 p-3 text-sm">
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">Watched level</span>
-            <span className="text-right text-muted-foreground">{watchedLevel}</span>
+        <div className="grid gap-3 md:grid-cols-2">
+          <div className="rounded-md border p-3">
+            <p className="mb-2 text-sm font-semibold">Resistance levels</p>
+            <div className="grid gap-1">
+              {strategy.resistances.slice(0, 5).map((level) => (
+                <LevelRow key={level.price} level={level} />
+              ))}
+              {strategy.resistances.length === 0 ? (
+                <p className="text-sm text-muted-foreground">None in range</p>
+              ) : null}
+            </div>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">Watched option</span>
-            <span className="text-right text-muted-foreground">{watchedOption}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">Option target</span>
-            <span className="text-right text-muted-foreground">{optionTargetBand}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">Entry</span>
-            <span className="text-right text-muted-foreground">
-              {strategy.entryPlan ? strategy.entryPlan.entryTrigger : "Waiting for confirmed setup"}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="font-medium">Risk/reward</span>
-            <span className="text-right text-muted-foreground">
-              {strategy.entryPlan ? strategy.entryPlan.riskReward : "Not valid"}
-            </span>
+          <div className="rounded-md border p-3">
+            <p className="mb-2 text-sm font-semibold">Support levels</p>
+            <div className="grid gap-1">
+              {strategy.supports.slice(0, 5).map((level) => (
+                <LevelRow key={level.price} level={level} />
+              ))}
+              {strategy.supports.length === 0 ? (
+                <p className="text-sm text-muted-foreground">None in range</p>
+              ) : null}
+            </div>
           </div>
         </div>
       </CardContent>
     </Card>
-  );
-}
-
-function StrategyComponentBreakdown({ components }: { components: StrategyComponentScore[] }) {
-  return (
-    <div className="rounded-md border p-3">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold">Score Components</p>
-        <Badge variant="outline">
-          {components.reduce((sum, item) => sum + item.points, 0)}/100
-        </Badge>
-      </div>
-      <div className="grid gap-2">
-        {components.map((item) => (
-          <div
-            key={item.key}
-            className="grid grid-cols-[1fr_auto] items-center gap-3 rounded-md border bg-muted/35 px-3 py-2 text-sm"
-          >
-            <div className="min-w-0">
-              <p className="truncate font-medium">{item.label}</p>
-              <p className="truncate text-xs text-muted-foreground">{item.detail}</p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Badge variant={componentStatusVariant(item.status)}>{item.status}</Badge>
-              <span className="w-12 text-right font-semibold tabular-nums">
-                {item.points}/{item.maxPoints}
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 

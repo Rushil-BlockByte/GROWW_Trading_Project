@@ -2,7 +2,9 @@ import { DEFAULT_UNDERLYINGS } from "@/lib/config/market";
 import { buildOptionChainContext } from "@/lib/options/chain-context";
 import { createPhase2PipelineSnapshot } from "@/lib/simulation/phase2-pipeline";
 import { createPhase4IndicatorContext } from "@/lib/simulation/phase4-context";
-import { evaluateVwapBreakoutStrategy } from "@/lib/strategy/vwap-breakout";
+import { evaluateSrFlipSignal } from "@/lib/strategy/sr-flip";
+import { srFlipSignalSummary } from "@/lib/strategy/sr-flip-signal";
+import type { LevelCandle, SrLevel } from "@/types/sr-flip";
 import type {
   SimulatedMarketSnapshot,
   SimulatedOptionRow,
@@ -120,39 +122,30 @@ export function createSimulatedMarketSnapshot(step: number): SimulatedMarketSnap
     expiry: phase2.selectedExpiry,
     rows: optionChain,
   });
-  const phase6 = evaluateVwapBreakoutStrategy({
-    indicator: phase4,
-    optionContext: phase5,
-    marketRegime: underlyings[0].regime,
-    dataQuality: phase2.dataQuality,
+  const srLevels: SrLevel[] = [
+    { price: Math.round(niftyLast - 90), touches: 7, firstIndex: 0, lastIndex: 0 },
+    { price: Math.round(niftyLast - 45), touches: 9, firstIndex: 0, lastIndex: 0 },
+    { price: Math.round(niftyLast + 45), touches: 8, firstIndex: 0, lastIndex: 0 },
+    { price: Math.round(niftyLast + 90), touches: 6, firstIndex: 0, lastIndex: 0 },
+  ];
+  const nowIso = new Date().toISOString();
+  const srSessionBars: LevelCandle[] = [
+    { startTime: nowIso, high: niftyLast + 5, low: niftyLast - 6, close: niftyLast - 2 },
+    { startTime: nowIso, high: niftyLast + 6, low: niftyLast - 4, close: niftyLast },
+  ];
+  const phase6 = evaluateSrFlipSignal({
+    underlying: "NIFTY",
+    levels: srLevels,
+    sessionBars: srSessionBars,
+    referencePrice: niftyLast,
+    vix: 12.5,
   });
 
   return {
     generatedAt: new Date().toISOString(),
     underlyings,
     optionChain,
-    signal: {
-      id: phase6.id,
-      underlying: phase6.underlying,
-      direction: phase6.direction,
-      setupName: phase6.name,
-      score: phase6.score,
-      quality: phase6.quality,
-      suggestedOption:
-        phase6.state === "CONFIRMED" ? phase6.selectedContract?.label : undefined,
-      entryRange: phase6.entryPlan
-        ? `Trigger ${phase6.entryPlan.entryTrigger}`
-        : undefined,
-      underlyingInvalidation: phase6.entryPlan
-        ? Number(phase6.entryPlan.invalidation)
-        : undefined,
-      targetOne: phase6.entryPlan ? Number(phase6.entryPlan.targetOne) : undefined,
-      targetTwo: phase6.entryPlan ? Number(phase6.entryPlan.targetTwo) : undefined,
-      riskReward: phase6.entryPlan ? phase6.entryPlan.riskReward : undefined,
-      reasons: phase6.reasons,
-      risks: phase6.risks,
-      state: phase6.state,
-    },
+    signal: srFlipSignalSummary(phase6),
     health: {
       websocket: "NOT_CONNECTED",
       lastTickSecondsAgo: 1,

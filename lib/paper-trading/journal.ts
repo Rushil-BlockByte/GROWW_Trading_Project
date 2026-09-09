@@ -1,10 +1,6 @@
 import Decimal from "decimal.js";
 import { DEFAULT_RISK_CONFIGURATION, type RiskConfiguration } from "@/lib/risk/defaults";
 import { calculatePositionSize } from "@/lib/risk/position-sizing";
-import {
-  OPTION_TARGET_MAX_POINTS,
-  OPTION_TARGET_MIN_POINTS,
-} from "@/lib/trading/option-targets";
 import type {
   PaperJournalEntry,
   PaperJournalSummary,
@@ -35,16 +31,6 @@ function tradeSideForOption(optionSide: PaperJournalEntry["optionSide"]): PaperT
   if (optionSide === "PE") return "LONG_PUT";
 
   return null;
-}
-
-function optionStopFromEntry(entryPrice: Decimal.Value) {
-  const entry = toDecimal(entryPrice);
-
-  return entry.minus(entry.mul(PAPER_OPTION_STOP_PERCENT).div(100));
-}
-
-function optionTargetFromEntry(entryPrice: Decimal.Value, points: number) {
-  return toDecimal(entryPrice).plus(points);
 }
 
 function baseEntry({
@@ -81,11 +67,11 @@ function baseEntry({
     strategyName: snapshot.phase6.name,
     strategyVersion: snapshot.phase6.version,
     underlying: snapshot.phase6.underlying,
-    signalState: snapshot.phase6.state,
-    bias: snapshot.phase6.bias,
-    quality: snapshot.phase6.quality,
-    score: snapshot.phase6.score,
-    marketRegime: snapshot.phase6.marketRegime,
+    signalState: snapshot.signal.state,
+    bias: biasFromDirection(snapshot.signal.direction),
+    quality: snapshot.signal.quality,
+    score: snapshot.signal.score,
+    marketRegime: snapshot.phase6.vixRegime,
     notes: sanitizeNotes(notes),
     reasons: snapshot.phase6.reasons,
     risks: snapshot.phase6.risks,
@@ -95,9 +81,22 @@ function baseEntry({
   };
 }
 
+function biasFromDirection(direction: SimulatedMarketSnapshot["signal"]["direction"]) {
+  if (direction === "BULLISH") return "BULLISH" as const;
+  if (direction === "BEARISH") return "BEARISH" as const;
+
+  return "NEUTRAL" as const;
+}
+
+function optionSideFromFlip(direction: SimulatedMarketSnapshot["phase6"]["direction"]) {
+  if (direction === "LONG") return "CE" as const;
+  if (direction === "SHORT") return "PE" as const;
+
+  return null;
+}
+
 export function canCreatePaperTrade(snapshot: SimulatedMarketSnapshot): PaperTradeGuard {
-  const selectedContract = snapshot.phase6.selectedContract;
-  const entryPlan = snapshot.phase6.entryPlan;
+  const plan = snapshot.phase6.plan;
 
   if (snapshot.phase6.liveOrdersEnabled !== false) {
     return {
@@ -125,34 +124,20 @@ export function canCreatePaperTrade(snapshot: SimulatedMarketSnapshot): PaperTra
   if (snapshot.phase6.state !== "CONFIRMED" || snapshot.phase6.direction === "NO TRADE") {
     return {
       allowed: false,
-      reason: "Strategy setup is not confirmed.",
+      reason: "No confirmed break-and-retest setup.",
     };
   }
 
-  if (!selectedContract) {
+  if (!plan) {
     return {
       allowed: false,
-      reason: "No option contract is selected.",
-    };
-  }
-
-  if (selectedContract.status !== "TRADABLE") {
-    return {
-      allowed: false,
-      reason: "Selected option contract is not liquid enough.",
-    };
-  }
-
-  if (!entryPlan) {
-    return {
-      allowed: false,
-      reason: "Entry and risk plan is not available.",
+      reason: "Flip entry/stop/target plan is not available.",
     };
   }
 
   return {
     allowed: true,
-    reason: "Confirmed paper setup.",
+    reason: "Confirmed break-and-retest setup.",
   };
 }
 
@@ -171,10 +156,12 @@ export function createJournalNoteFromSnapshot({
     ...baseEntry({ id, now, notes, snapshot }),
     type: "NOTE",
     status: "NOTE",
-    optionSymbol: snapshot.phase6.selectedContract?.label ?? null,
-    optionSide: snapshot.phase6.selectedContract?.side ?? null,
-    tradeSide: tradeSideForOption(snapshot.phase6.selectedContract?.side ?? null),
-    strike: snapshot.phase6.selectedContract?.strike ?? null,
+    optionSymbol: snapshot.phase6.plan
+      ? `${snapshot.phase6.underlying} ${optionSideFromFlip(snapshot.phase6.direction) ?? ""} level ${snapshot.phase6.plan.level}`
+      : null,
+    optionSide: optionSideFromFlip(snapshot.phase6.direction),
+    tradeSide: tradeSideForOption(optionSideFromFlip(snapshot.phase6.direction)),
+    strike: snapshot.phase6.plan?.level ?? null,
     expiry: snapshot.phase5.expiry,
     entryPrice: null,
     stopPrice: null,
@@ -206,14 +193,15 @@ export function createPaperTradeFromSnapshot({
     throw new Error(guard.reason);
   }
 
-  const selectedContract = snapshot.phase6.selectedContract;
+  const plan = snapshot.phase6.plan;
 
-  if (!selectedContract) {
-    throw new Error("No option contract is selected.");
+  if (!plan) {
+    throw new Error("Flip entry/stop/target plan is not available.");
   }
 
-  const entryPrice = selectedContract.ltp;
-  const stopPrice = optionStopFromEntry(entryPrice);
+  const side = optionSideFromFlip(snapshot.phase6.direction);
+  const entryPrice = plan.entry;
+  const stopPrice = plan.stop;
   const positionSize = calculatePositionSize({
     tradingCapital: risk.tradingCapital,
     riskPerTradePercent: risk.riskPerTradePercent,
@@ -227,15 +215,15 @@ export function createPaperTradeFromSnapshot({
     ...baseEntry({ id, now, notes, snapshot }),
     type: "PAPER_TRADE",
     status: "OPEN",
-    optionSymbol: selectedContract.label,
-    optionSide: selectedContract.side,
-    tradeSide: tradeSideForOption(selectedContract.side),
-    strike: selectedContract.strike,
+    optionSymbol: `${snapshot.phase6.underlying} ${side ?? ""} level ${plan.level}`,
+    optionSide: side,
+    tradeSide: tradeSideForOption(side),
+    strike: plan.level,
     expiry: snapshot.phase5.expiry,
     entryPrice: toFixed(entryPrice),
     stopPrice: toFixed(stopPrice),
-    targetOne: toFixed(optionTargetFromEntry(entryPrice, OPTION_TARGET_MIN_POINTS)),
-    targetTwo: toFixed(optionTargetFromEntry(entryPrice, OPTION_TARGET_MAX_POINTS)),
+    targetOne: toFixed(plan.target),
+    targetTwo: null,
     quantity: positionSize.quantity,
     lots: positionSize.lots,
     ruleViolations,

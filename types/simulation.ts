@@ -9,7 +9,7 @@ import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorContext } from "@/types/indicators";
 import type { InstrumentKind } from "@/types/instruments";
 import type { OptionChainContext } from "@/types/options";
-import type { StrategyEvaluation } from "@/types/strategy";
+import type { SrFlipEvaluation } from "@/types/sr-flip";
 
 export type SimulatedUnderlying = {
   symbol: UnderlyingSymbol;
@@ -89,7 +89,7 @@ export type SimulatedMarketSnapshot = {
   phase4ByUnderlying?: Partial<Record<UnderlyingSymbol, IndicatorContext>>;
   phase5: OptionChainContext;
   phase5ByUnderlying?: Partial<Record<UnderlyingSymbol, OptionChainContext>>;
-  phase6: StrategyEvaluation;
+  phase6: SrFlipEvaluation;
 };
 
 export type OneMinuteCandleConfirmation = {

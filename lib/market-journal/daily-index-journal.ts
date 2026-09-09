@@ -175,7 +175,7 @@ export function buildDailyIndexJournal(snapshot: SimulatedMarketSnapshot): Daily
       ? `${weakest.label} was the weakest at ${signedText(weakest.changePercent, "%")}.`
       : "No clear weak index separated from the group.",
     indicatorRead(snapshot.phase4),
-    `Scanner state: ${snapshot.phase6.state}, direction ${snapshot.phase6.direction}, score ${snapshot.phase6.score}/100.`,
+    `Scanner state: ${snapshot.phase6.state}, direction ${snapshot.phase6.direction} (${snapshot.phase6.quality}).`,
     `Option chain read: ${snapshot.phase5.tradableContracts} tradable contracts, PCR OI ${snapshot.phase5.putCallOpenInterestRatio ?? "pending"}.`,
   ];
   const nextDayPrep = [
