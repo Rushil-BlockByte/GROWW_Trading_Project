@@ -19,6 +19,8 @@ import {
   type LiveStreamSafetyCheck,
 } from "@/lib/zerodha/live-stream-safety";
 import { resolveInitialLiveUniverse } from "@/lib/zerodha/live-universe";
+import { buildLevels } from "@/lib/strategy/sr-levels";
+import type { LevelCandle, SrLevel } from "@/types/sr-flip";
 import type { IndicatorCandle } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
 import type { MarketTick, UnderlyingSymbol } from "@/types/market";
@@ -26,6 +28,9 @@ import type { SimulatedMarketSnapshot } from "@/types/simulation";
 
 const LIVE_OPTION_STRIKE_WINDOW = 5;
 const INDICATOR_WARMUP_DAYS = 7;
+const SR_LEVEL_HISTORY_DAYS = 180;
+const INDIA_VIX_TOKEN = 264969;
+const SR_LEVEL_PARAMS = { pivot: 3, clusterPoints: 20, minTouches: 5 };
 
 export type LiveKiteStreamSnapshot = {
   configured: {
@@ -73,6 +78,8 @@ export class LiveKiteStreamService {
   private sessionCandlesByToken = new Map<number, IndicatorCandle[]>();
   private warmupCandlesByToken = new Map<number, IndicatorCandle[]>();
   private previousDayByToken = new Map<number, LiveIndicatorPreviousDay>();
+  private srLevelsByUnderlying: Partial<Record<UnderlyingSymbol, SrLevel[]>> = {};
+  private indiaVix: number | null = null;
   private startedAt?: Date;
   private lastError?: string;
 
@@ -119,6 +126,8 @@ export class LiveKiteStreamService {
     this.sessionCandlesByToken = new Map();
     this.warmupCandlesByToken = new Map();
     this.previousDayByToken = new Map();
+    this.srLevelsByUnderlying = {};
+    this.indiaVix = null;
 
     if (liveUniverse.subscriptions.length === 0) {
       this.lastError = "No index instruments resolved from Zerodha instrument master.";
@@ -129,6 +138,10 @@ export class LiveKiteStreamService {
       apiKey: config.kiteApiKey,
       accessToken: config.kiteAccessToken,
       instruments: liveUniverse.instruments,
+    });
+    await this.seedSrLevels({
+      apiKey: config.kiteApiKey,
+      accessToken: config.kiteAccessToken,
     });
 
     this.stateStore = new MarketStateStore(this.repository);
@@ -214,6 +227,73 @@ export class LiveKiteStreamService {
     );
   }
 
+  /**
+   * Seed the fixed session support/resistance levels from ~180 days of 15-min
+   * index history (levels stay constant for the session), plus the latest
+   * India VIX for the regime/window. Failures degrade to empty levels.
+   */
+  private async seedSrLevels({ apiKey, accessToken }: { apiKey: string; accessToken: string }) {
+    if (!this.repository) return;
+
+    const now = new Date();
+    const from = `${kolkataDate(addDays(now, -SR_LEVEL_HISTORY_DAYS))} 09:15:00`;
+    const to = kiteDateTime(now);
+
+    await Promise.all(
+      DEFAULT_UNDERLYINGS.map(async (underlying) => {
+        const index = this.repository
+          ?.getAll()
+          .find(
+            (instrument) =>
+              instrument.kind === "INDEX" && instrument.underlyingSymbol === underlying.symbol,
+          );
+
+        if (!index) return;
+
+        try {
+          const historical = await fetchKiteHistoricalCandles({
+            apiKey,
+            accessToken,
+            instrumentToken: index.instrumentToken,
+            interval: "15minute",
+            from,
+            to,
+            continuous: false,
+            includeOpenInterest: false,
+          });
+          const candles: LevelCandle[] = historical.candles.map((candle) => ({
+            startTime: candle.startTime,
+            high: Number(candle.high),
+            low: Number(candle.low),
+            close: Number(candle.close),
+          }));
+
+          this.srLevelsByUnderlying[underlying.symbol] = buildLevels(candles, SR_LEVEL_PARAMS);
+        } catch {
+          this.srLevelsByUnderlying[underlying.symbol] = [];
+        }
+      }),
+    );
+
+    try {
+      const vix = await fetchKiteHistoricalCandles({
+        apiKey,
+        accessToken,
+        instrumentToken: INDIA_VIX_TOKEN,
+        interval: "day",
+        from: `${kolkataDate(addDays(now, -10))} 09:15:00`,
+        to,
+        continuous: false,
+        includeOpenInterest: false,
+      });
+      const last = vix.candles.at(-1);
+
+      this.indiaVix = last ? Number(last.close) : null;
+    } catch {
+      this.indiaVix = null;
+    }
+  }
+
   getSnapshot(): LiveKiteStreamSnapshot {
     const config = getServerConfig();
     const providerStatus =
@@ -266,6 +346,8 @@ export class LiveKiteStreamService {
       instrumentMasterCount: this.instruments.length,
       indicatorInstruments: this.indicatorInstruments,
       optionUniverses: this.liveOptionUniverses,
+      srLevelsByUnderlying: this.srLevelsByUnderlying,
+      indiaVix: this.indiaVix,
     });
 
     return {
