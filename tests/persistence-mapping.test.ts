@@ -44,6 +44,7 @@ function confirmedSnapshot(): SimulatedMarketSnapshot {
         entry: 25200,
         stop: 25170,
         target: 25250,
+        trail: 25,
         riskReward: "1.67",
       },
       liveOrdersEnabled: false,

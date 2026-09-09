@@ -59,7 +59,8 @@ export type FlipPlan = {
   level: number;
   entry: number;
   stop: number;
-  target: number;
+  target: number; // first target — bank a partial here
+  trail: number; // trail the runner by this many points after the first target
   riskReward: string;
 };
 

@@ -30,14 +30,35 @@ describe("sr-flip backtest core", () => {
     const trades = findFlipTrades(bars, [level]);
 
     expect(trades).toHaveLength(1);
+    // First target (140) hit -> bank the half (+20); the runner has no further
+    // bars, so it exits at breakeven -> total +20 on this trade.
     expect(trades[0]).toMatchObject({
       direction: "LONG",
       entry: 100,
       target: 140,
       stop: 75,
       outcome: "TARGET",
-      pnl: 40,
+      pnl: 20,
     });
+  });
+
+  it("lets the runner trail for extra profit beyond the first target", () => {
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),
+      candle(96, 89, 91, 1),
+      candle(94, 88, 90, 2),
+      candle(97, 90, 92, 3),
+      candle(122, 100, 120, 4), // break up
+      candle(121, 110, 116, 5),
+      candle(115, 108, 110, 6), // retest
+      candle(142, 130, 141, 7), // first target 140 hit -> bank half
+      candle(175, 150, 172, 8), // runner rides higher; trail exits this move
+      candle(168, 145, 150, 9),
+    ];
+    const trades = findFlipTrades(bars, [level]);
+
+    expect(trades[0].outcome).toBe("TARGET");
+    expect(trades[0].pnl).toBeGreaterThan(20); // more than the banked half alone
   });
 
   it("does not trade when price never retests after the break", () => {
