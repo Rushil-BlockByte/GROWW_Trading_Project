@@ -14,7 +14,8 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:proxy": "node scripts/wsl-postgres-proxy.mjs",
-    "kite:token": "node scripts/exchange-kite-token.mjs"
+    "kite:token": "node scripts/exchange-kite-token.mjs",
+  "levels:anchor": "node scripts/set-anchor.mjs"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",

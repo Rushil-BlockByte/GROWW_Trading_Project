@@ -83,4 +83,19 @@ export type SrFlipEvaluation = {
   reasons: string[];
   risks: string[];
   liveOrdersEnabled: false;
+  /** Where the levels came from: the day's anchor and the 5-year history span. */
+  levelSource?: SrLevelSource;
+};
+
+/** Provenance for the fixed daily level set (5-year backtested, anchored once). */
+export type SrLevelSource = {
+  anchor: number | null;
+  anchorType: "open" | "prevClose" | null;
+  anchorDate: string | null;
+  historyStart: string | null;
+  historyEnd: string | null;
+  historyYears: number | null;
+  barCount: number | null;
+  computedAt: string | null;
+  stale: boolean;
 };

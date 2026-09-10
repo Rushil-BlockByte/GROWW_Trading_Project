@@ -20,7 +20,14 @@ import {
 } from "@/lib/zerodha/live-stream-safety";
 import { resolveInitialLiveUniverse } from "@/lib/zerodha/live-universe";
 import { buildLevels } from "@/lib/strategy/sr-levels";
-import type { LevelCandle, SrLevel } from "@/types/sr-flip";
+import {
+  isSrRawBarCacheFresh,
+  readSrDayAnchor,
+  readSrRawBarCache,
+  writeSrRawBarCache,
+  type SrRawBarCache,
+} from "@/lib/strategy/sr-level-store";
+import type { LevelCandle, SrLevel, SrLevelSource } from "@/types/sr-flip";
 import type { IndicatorCandle } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
 import type { MarketTick, UnderlyingSymbol } from "@/types/market";
@@ -28,9 +35,15 @@ import type { SimulatedMarketSnapshot } from "@/types/simulation";
 
 const LIVE_OPTION_STRIKE_WINDOW = 5;
 const INDICATOR_WARMUP_DAYS = 7;
-const SR_LEVEL_HISTORY_DAYS = 90; // ~90 days of 5-min fits one Kite request
+// Levels are backtested over ~5 years of 5-minute history (the user's rule),
+// fetched once per day and cached. Kite caps 5-min at ~100 days/request, so the
+// window is pulled in chunks.
+const SR_LEVEL_HISTORY_DAYS = 1830; // ~5 years
+const SR_LEVEL_FETCH_CHUNK_DAYS = 84;
 const INDIA_VIX_TOKEN = 264969;
-const SR_LEVEL_PARAMS = { pivot: 3, clusterPoints: 20, minTouches: 5 };
+// minTouches raised for the 5-year window: strong levels there carry 50-100
+// touches, so a low floor would only admit noise far from price.
+const SR_LEVEL_PARAMS = { pivot: 3, clusterPoints: 20, minTouches: 12 };
 
 export type LiveKiteStreamSnapshot = {
   configured: {
@@ -79,6 +92,7 @@ export class LiveKiteStreamService {
   private warmupCandlesByToken = new Map<number, IndicatorCandle[]>();
   private previousDayByToken = new Map<number, LiveIndicatorPreviousDay>();
   private srLevelsByUnderlying: Partial<Record<UnderlyingSymbol, SrLevel[]>> = {};
+  private srLevelSource: SrLevelSource = emptyLevelSource();
   private indiaVix: number | null = null;
   private startedAt?: Date;
   private lastError?: string;
@@ -127,6 +141,7 @@ export class LiveKiteStreamService {
     this.warmupCandlesByToken = new Map();
     this.previousDayByToken = new Map();
     this.srLevelsByUnderlying = {};
+    this.srLevelSource = emptyLevelSource();
     this.indiaVix = null;
 
     if (liveUniverse.subscriptions.length === 0) {
@@ -228,52 +243,93 @@ export class LiveKiteStreamService {
   }
 
   /**
-   * Seed the fixed session support/resistance levels from ~90 days of 5-min
-   * index history (levels stay constant for the session), plus the latest
-   * India VIX for the regime/window. Failures degrade to empty levels.
+   * Seed the fixed daily support/resistance levels from ~5 years of 5-minute
+   * index history (the user's rule: 5-year backtested, computed once per day,
+   * held constant through the session). The raw history is cached per Kolkata
+   * day so the ~22-request fetch runs at most once daily; levels are then built
+   * with the shared `buildLevels`. The day's anchor (open or prior close) is
+   * read from the anchor file and attached for the morning map. India VIX gives
+   * the regime/window. Failures degrade to empty levels.
    */
   private async seedSrLevels({ apiKey, accessToken }: { apiKey: string; accessToken: string }) {
     if (!this.repository) return;
 
     const now = new Date();
-    const from = `${kolkataDate(addDays(now, -SR_LEVEL_HISTORY_DAYS))} 09:15:00`;
+    const today = kolkataDate(now);
     const to = kiteDateTime(now);
 
-    await Promise.all(
-      DEFAULT_UNDERLYINGS.map(async (underlying) => {
-        const index = this.repository
-          ?.getAll()
-          .find(
-            (instrument) =>
-              instrument.kind === "INDEX" && instrument.underlyingSymbol === underlying.symbol,
-          );
+    const indexByUnderlying = new Map<UnderlyingSymbol, number>();
+    for (const underlying of DEFAULT_UNDERLYINGS) {
+      const index = this.repository
+        .getAll()
+        .find(
+          (instrument) =>
+            instrument.kind === "INDEX" && instrument.underlyingSymbol === underlying.symbol,
+        );
+      if (index) indexByUnderlying.set(underlying.symbol, index.instrumentToken);
+    }
 
-        if (!index) return;
+    // Reuse today's cached 5-year history when present; otherwise fetch it once
+    // (in chunks) and cache it for the rest of the day.
+    const cached = readSrRawBarCache();
+    let cache: SrRawBarCache;
 
-        try {
-          const historical = await fetchKiteHistoricalCandles({
-            apiKey,
-            accessToken,
-            instrumentToken: index.instrumentToken,
-            interval: "5minute",
-            from,
-            to,
-            continuous: false,
-            includeOpenInterest: false,
-          });
-          const candles: LevelCandle[] = historical.candles.map((candle) => ({
-            startTime: candle.startTime,
-            high: Number(candle.high),
-            low: Number(candle.low),
-            close: Number(candle.close),
-          }));
+    if (isSrRawBarCacheFresh(cached, today)) {
+      cache = cached;
+    } else {
+      const fromDate = `${kolkataDate(addDays(now, -SR_LEVEL_HISTORY_DAYS))} 09:15:00`;
+      const barsByUnderlying: Partial<Record<UnderlyingSymbol, LevelCandle[]>> = {};
 
-          this.srLevelsByUnderlying[underlying.symbol] = buildLevels(candles, SR_LEVEL_PARAMS);
-        } catch {
-          this.srLevelsByUnderlying[underlying.symbol] = [];
-        }
-      }),
-    );
+      for (const [symbol, token] of indexByUnderlying) {
+        barsByUnderlying[symbol] = await this.fetchFiveMinuteHistory({
+          apiKey,
+          accessToken,
+          instrumentToken: token,
+          from: fromDate,
+          to,
+        });
+      }
+
+      const spanBars = Object.values(barsByUnderlying).flat();
+      const allTimes = spanBars.map((bar) => bar.startTime).sort();
+      cache = {
+        asOfDate: today,
+        fetchedAt: now.toISOString(),
+        historyStart: allTimes[0] ?? fromDate,
+        historyEnd: allTimes.at(-1) ?? to,
+        barsByUnderlying,
+      };
+
+      try {
+        writeSrRawBarCache(cache);
+      } catch {
+        // in-memory levels still work even if the cache write fails
+      }
+    }
+
+    for (const underlying of DEFAULT_UNDERLYINGS) {
+      const bars = cache.barsByUnderlying[underlying.symbol] ?? [];
+      this.srLevelsByUnderlying[underlying.symbol] = bars.length
+        ? buildLevels(bars, SR_LEVEL_PARAMS)
+        : [];
+    }
+
+    const anchor = readSrDayAnchor();
+    const activeAnchor = anchor && anchor.date === today ? anchor : null;
+    const niftyBars = cache.barsByUnderlying.NIFTY ?? Object.values(cache.barsByUnderlying).flat();
+    const years = spanYears(cache.historyStart, cache.historyEnd);
+
+    this.srLevelSource = {
+      anchor: activeAnchor?.anchor ?? null,
+      anchorType: activeAnchor?.type ?? null,
+      anchorDate: activeAnchor?.date ?? null,
+      historyStart: cache.historyStart,
+      historyEnd: cache.historyEnd,
+      historyYears: years,
+      barCount: niftyBars.length,
+      computedAt: now.toISOString(),
+      stale: cache.asOfDate !== today,
+    };
 
     try {
       const vix = await fetchKiteHistoricalCandles({
@@ -292,6 +348,62 @@ export class LiveKiteStreamService {
     } catch {
       this.indiaVix = null;
     }
+  }
+
+  /**
+   * Fetch 5-minute candles across a multi-year window in Kite-sized chunks
+   * (~100 days each). A failed chunk is skipped rather than aborting the run.
+   */
+  private async fetchFiveMinuteHistory({
+    apiKey,
+    accessToken,
+    instrumentToken,
+    from,
+    to,
+  }: {
+    apiKey: string;
+    accessToken: string;
+    instrumentToken: number;
+    from: string;
+    to: string;
+  }): Promise<LevelCandle[]> {
+    const bars: LevelCandle[] = [];
+    const end = new Date(to);
+    let cursor = new Date(from);
+
+    while (cursor < end) {
+      const chunkEnd = new Date(
+        Math.min(cursor.getTime() + SR_LEVEL_FETCH_CHUNK_DAYS * 86_400_000, end.getTime()),
+      );
+
+      try {
+        const historical = await fetchKiteHistoricalCandles({
+          apiKey,
+          accessToken,
+          instrumentToken,
+          interval: "5minute",
+          from: `${kolkataDate(cursor)} 09:15:00`,
+          to: `${kolkataDate(chunkEnd)} 15:30:00`,
+          continuous: false,
+          includeOpenInterest: false,
+        });
+
+        for (const candle of historical.candles) {
+          bars.push({
+            startTime: candle.startTime,
+            high: Number(candle.high),
+            low: Number(candle.low),
+            close: Number(candle.close),
+          });
+        }
+      } catch {
+        // skip this chunk; the level set degrades gracefully with fewer bars
+      }
+
+      cursor = new Date(chunkEnd.getTime() + 86_400_000);
+    }
+
+    return bars;
   }
 
   getSnapshot(): LiveKiteStreamSnapshot {
@@ -347,6 +459,7 @@ export class LiveKiteStreamService {
       indicatorInstruments: this.indicatorInstruments,
       optionUniverses: this.liveOptionUniverses,
       srLevelsByUnderlying: this.srLevelsByUnderlying,
+      srLevelSource: this.srLevelSource,
       indiaVix: this.indiaVix,
     });
 
@@ -534,6 +647,31 @@ function kolkataSessionStartTime(date: string) {
 
 function addDays(date: Date, days: number) {
   return new Date(date.getTime() + days * 86_400_000);
+}
+
+function emptyLevelSource(): SrLevelSource {
+  return {
+    anchor: null,
+    anchorType: null,
+    anchorDate: null,
+    historyStart: null,
+    historyEnd: null,
+    historyYears: null,
+    barCount: null,
+    computedAt: null,
+    stale: false,
+  };
+}
+
+function spanYears(start: string | null, end: string | null): number | null {
+  if (!start || !end) return null;
+
+  const from = new Date(start).getTime();
+  const to = new Date(end).getTime();
+
+  if (Number.isNaN(from) || Number.isNaN(to) || to <= from) return null;
+
+  return Math.round(((to - from) / (365.25 * 86_400_000)) * 10) / 10;
 }
 
 function dedupeInstruments(instruments: InstrumentRecord[]) {

@@ -8,7 +8,7 @@ import type { MarketDataProviderStatus } from "@/lib/providers/market-data-provi
 import { buildOptionChainContext } from "@/lib/options/chain-context";
 import { evaluateSrFlipSignal } from "@/lib/strategy/sr-flip";
 import { srFlipSignalSummary } from "@/lib/strategy/sr-flip-signal";
-import type { LevelCandle, SrLevel } from "@/types/sr-flip";
+import type { LevelCandle, SrLevel, SrLevelSource, SrFlipEvaluation } from "@/types/sr-flip";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorCandle, IndicatorContext } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
@@ -56,6 +56,7 @@ export type LiveMarketSnapshotInput = {
   optionUniverses?: LiveOptionUniversesSnapshot;
   indicatorInstruments?: Partial<Record<UnderlyingSymbol, InstrumentRecord>>;
   srLevelsByUnderlying?: Partial<Record<UnderlyingSymbol, SrLevel[]>>;
+  srLevelSource?: SrLevelSource;
   indiaVix?: number | null;
   generatedAt?: Date;
 };
@@ -73,6 +74,7 @@ export function buildLiveMarketSnapshot({
   optionUniverses,
   indicatorInstruments,
   srLevelsByUnderlying,
+  srLevelSource,
   indiaVix,
   generatedAt = new Date(),
 }: LiveMarketSnapshotInput): SimulatedMarketSnapshot | undefined {
@@ -181,13 +183,16 @@ export function buildLiveMarketSnapshot({
       sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
     }),
   );
-  const phase6 = evaluateSrFlipSignal({
-    underlying: LIVE_SELECTED_UNDERLYING,
-    levels: srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [],
-    sessionBars: srSessionBars,
-    referencePrice: srReferencePrice,
-    vix: indiaVix ?? null,
-  });
+  const phase6: SrFlipEvaluation = {
+    ...evaluateSrFlipSignal({
+      underlying: LIVE_SELECTED_UNDERLYING,
+      levels: srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [],
+      sessionBars: srSessionBars,
+      referencePrice: srReferencePrice,
+      vix: indiaVix ?? null,
+    }),
+    levelSource: srLevelSource,
+  };
 
   return {
     generatedAt: generatedAt.toISOString(),
