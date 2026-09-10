@@ -51,7 +51,7 @@ describe("paper-trade journal", () => {
     expect(guard.reason).toBe("No confirmed break-and-retest setup.");
   });
 
-  it("blocks paper-trade capture until a closed 1-minute candle is ready", () => {
+  it("blocks paper-trade capture until a closed 5-minute candle is ready", () => {
     const snapshot = confirmedSnapshot();
     const guard = canCreatePaperTrade({
       ...snapshot,
@@ -60,19 +60,19 @@ describe("paper-trade journal", () => {
         candleConfirmation: {
           status: "BUILDING",
           currentCandleStart: "2026-09-01T04:30:00.000Z",
-          currentCandleEnd: "2026-09-01T04:31:00.000Z",
+          currentCandleEnd: "2026-09-01T04:35:00.000Z",
           lastCompletedCandleStart: null,
           lastCompletedCandleEnd: null,
-          nextConfirmationTime: "2026-09-01T04:31:00.000Z",
+          nextConfirmationTime: "2026-09-01T04:35:00.000Z",
           decisionReady: false,
-          message: "Wait for the first 1-minute candle to close before taking a paper trade.",
+          message: "Wait for the first 5-minute candle to close before taking a paper trade.",
         },
       },
     });
 
     expect(guard.allowed).toBe(false);
     expect(guard.reason).toBe(
-      "Wait for the first 1-minute candle to close before taking a paper trade.",
+      "Wait for the first 5-minute candle to close before taking a paper trade.",
     );
   });
 

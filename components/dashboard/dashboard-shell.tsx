@@ -2046,7 +2046,7 @@ function IndicatorContextPanel({
     nextConfirmationTime: null,
     decisionReady: false,
     message:
-      "Candle confirmation is missing from this live snapshot. Restart the stream once to restore exact 1-minute close timing.",
+      "Candle confirmation is missing from this live snapshot. Restart the stream once to restore exact 5-minute close timing.",
     };
 
   return (
@@ -2078,7 +2078,7 @@ function IndicatorContextPanel({
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="flex items-center gap-2 text-sm font-semibold">
               <CandlestickChart className="h-4 w-4 text-accent" />
-              1m Candle Confirmation
+              5m Candle Confirmation
             </p>
             <Badge variant={candleConfirmationVariant(candleConfirmation.status)}>
               {candleConfirmationLabel(candleConfirmation.status)}
@@ -2086,7 +2086,7 @@ function IndicatorContextPanel({
           </div>
           <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-4">
             <Metric
-              label="Current 1m"
+              label="Current 5m"
               value={formatCandleWindow(
                 candleConfirmation.currentCandleStart,
                 candleConfirmation.currentCandleEnd,

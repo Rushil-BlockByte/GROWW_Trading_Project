@@ -92,7 +92,7 @@ export type SimulatedMarketSnapshot = {
   phase6: SrFlipEvaluation;
 };
 
-export type OneMinuteCandleConfirmation = {
+export type CandleConfirmation = {
   status: "WAITING_FOR_TICK" | "BUILDING" | "CONFIRMED";
   currentCandleStart: string | null;
   currentCandleEnd: string | null;
@@ -128,6 +128,6 @@ export type SimulatedPhase2Pipeline = {
   indicatorSources?: Partial<Record<UnderlyingSymbol, IndicatorSourceInstrument>>;
   activeCandles: MarketCandleData[];
   completedCandleCount: number;
-  candleConfirmation?: OneMinuteCandleConfirmation;
-  candleConfirmations?: Partial<Record<UnderlyingSymbol, OneMinuteCandleConfirmation>>;
+  candleConfirmation?: CandleConfirmation;
+  candleConfirmations?: Partial<Record<UnderlyingSymbol, CandleConfirmation>>;
 };

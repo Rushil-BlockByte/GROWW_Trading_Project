@@ -117,7 +117,7 @@ export function canCreatePaperTrade(snapshot: SimulatedMarketSnapshot): PaperTra
       allowed: false,
       reason:
         snapshot.phase2.candleConfirmation.message ||
-        "Wait for the current 1-minute candle to close before taking a paper trade.",
+        "Wait for the current 5-minute candle to close before taking a paper trade.",
     };
   }
 

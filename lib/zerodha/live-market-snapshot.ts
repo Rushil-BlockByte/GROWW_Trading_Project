@@ -15,7 +15,7 @@ import type { InstrumentRecord } from "@/types/instruments";
 import type { DataQualityStatus, MarketRegime, MarketTick, UnderlyingSymbol } from "@/types/market";
 import type {
   IndicatorSourceInstrument,
-  OneMinuteCandleConfirmation,
+  CandleConfirmation,
   SimulatedMarketSnapshot,
   SimulatedOptionLeg,
   SimulatedOptionRow,
@@ -114,7 +114,7 @@ export function buildLiveMarketSnapshot({
     instrumentToken: selectedIndicatorToken,
     sessionCandles: selectedSessionCandles,
   });
-  const candleConfirmation = buildOneMinuteCandleConfirmation({
+  const candleConfirmation = buildCandleConfirmation({
     candleBuilder,
     instrumentToken: selectedIndicatorToken,
     sessionCandles: selectedSessionCandles,
@@ -383,7 +383,7 @@ function buildLiveCandleConfirmationsByUnderlying({
   sessionCandlesByToken: LiveMarketSnapshotInput["sessionCandlesByToken"];
 }) {
   return DEFAULT_UNDERLYINGS.reduce<
-    Partial<Record<UnderlyingSymbol, OneMinuteCandleConfirmation>>
+    Partial<Record<UnderlyingSymbol, CandleConfirmation>>
   >((confirmations, underlying) => {
     const source = indicatorSources[underlying.symbol];
 
@@ -391,7 +391,7 @@ function buildLiveCandleConfirmationsByUnderlying({
 
     const token = source.instrument.instrumentToken;
 
-    confirmations[underlying.symbol] = buildOneMinuteCandleConfirmation({
+    confirmations[underlying.symbol] = buildCandleConfirmation({
       candleBuilder,
       instrumentToken: token,
       sessionCandles: sessionCandlesByToken?.get(token) ?? [],
@@ -580,7 +580,7 @@ function completedMarketCandleFromIndicator(
   };
 }
 
-function buildOneMinuteCandleConfirmation({
+function buildCandleConfirmation({
   candleBuilder,
   instrumentToken,
   sessionCandles = [],
@@ -588,44 +588,48 @@ function buildOneMinuteCandleConfirmation({
   candleBuilder: LiveMarketSnapshotInput["candleBuilder"];
   instrumentToken: number;
   sessionCandles?: IndicatorCandle[];
-}): OneMinuteCandleConfirmation {
-  const completedCandles = liveOneMinuteMarketCandles({
-    candleBuilder,
-    instrumentToken,
-    sessionCandles,
-  });
+}): CandleConfirmation {
+  // Closed 5-minute bars from the same 1-minute stream the flip strategy uses,
+  // so the gate matches the timeframe levels and the break/retest run on.
+  const fiveMinBars = fiveMinuteBars(
+    liveOneMinuteMarketCandles({ candleBuilder, instrumentToken, sessionCandles }),
+  );
+  const lastClosed = fiveMinBars.at(-1) ?? null;
+  const lastClosedStart = lastClosed?.startTime ?? null;
+  const lastClosedEnd = lastClosed ? fiveMinuteEndTime(lastClosed.startTime) : null;
+  const decisionReady = Boolean(lastClosed);
+
+  // The forming (not-yet-closed) 5-minute candle from the live builder.
   const currentCandle =
     candleBuilder
       ?.getActiveCandles()
-      .find((candle) => candle.instrumentToken === instrumentToken && candle.interval === "1m") ?? null;
-  const lastCompletedCandle = completedCandles.at(-1) ?? null;
-  const decisionReady = Boolean(lastCompletedCandle);
+      .find((candle) => candle.instrumentToken === instrumentToken && candle.interval === "5m") ?? null;
 
   if (currentCandle) {
     return {
       status: "BUILDING",
       currentCandleStart: currentCandle.startTime,
       currentCandleEnd: currentCandle.endTime,
-      lastCompletedCandleStart: lastCompletedCandle?.startTime ?? null,
-      lastCompletedCandleEnd: lastCompletedCandle?.endTime ?? null,
+      lastCompletedCandleStart: lastClosedStart,
+      lastCompletedCandleEnd: lastClosedEnd,
       nextConfirmationTime: currentCandle.endTime,
       decisionReady,
       message: decisionReady
-        ? "Use the last closed 1-minute candle; the current candle is still building."
-        : "Wait for the first 1-minute candle to close before taking a paper trade.",
+        ? "Use the last closed 5-minute candle; the current 5-minute candle is still building."
+        : "Wait for the first 5-minute candle to close before taking a paper trade.",
     };
   }
 
-  if (lastCompletedCandle) {
+  if (lastClosed) {
     return {
       status: "CONFIRMED",
       currentCandleStart: null,
       currentCandleEnd: null,
-      lastCompletedCandleStart: lastCompletedCandle.startTime,
-      lastCompletedCandleEnd: lastCompletedCandle.endTime,
-      nextConfirmationTime: lastCompletedCandle.endTime,
+      lastCompletedCandleStart: lastClosedStart,
+      lastCompletedCandleEnd: lastClosedEnd,
+      nextConfirmationTime: lastClosedEnd,
       decisionReady: true,
-      message: "Latest 1-minute candle is closed and ready for the indicator filter.",
+      message: "Latest 5-minute candle is closed — levels and the break/retest pattern are updated.",
     };
   }
 
@@ -637,7 +641,7 @@ function buildOneMinuteCandleConfirmation({
     lastCompletedCandleEnd: null,
     nextConfirmationTime: null,
     decisionReady: false,
-    message: "Waiting for live ticks to build the first 1-minute candle.",
+    message: "Waiting for live ticks to build the first 5-minute candle.",
   };
 }
 
@@ -645,6 +649,12 @@ function oneMinuteEndTime(startTime: string) {
   const parsed = new Date(startTime);
 
   return Number.isNaN(parsed.getTime()) ? startTime : addMinutes(parsed, 1).toISOString();
+}
+
+function fiveMinuteEndTime(startTime: string) {
+  const parsed = new Date(startTime);
+
+  return Number.isNaN(parsed.getTime()) ? startTime : addMinutes(parsed, 5).toISOString();
 }
 
 function buildLiveOptionChainsByUnderlying({
