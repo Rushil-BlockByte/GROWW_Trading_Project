@@ -85,6 +85,12 @@ export type SrFlipEvaluation = {
   liveOrdersEnabled: false;
   /** True when the session range has exceeded the VIX expectation — a trend/gap day. */
   trendRisk: boolean;
+  /**
+   * Soft confirmation only (not a gate): the latest 5-min futures volume vs its
+   * recent average. A surge means the move carries real participation. ratio is
+   * null when no volume feed is available.
+   */
+  volumeConfirmation: { ratio: number | null; surge: boolean };
   /** Where the levels came from: the day's anchor and the 5-year history span. */
   levelSource?: SrLevelSource;
 };

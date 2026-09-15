@@ -185,6 +185,11 @@ export function buildLiveMarketSnapshot({
     }),
   );
   const srLevels = srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [];
+  // Soft volume cue: the latest closed 5-min FUTURES volume vs its recent
+  // average (the index has no volume). Not a gate — just adds conviction.
+  const volumeRatio = fiveMinuteVolumeRatio(
+    sessionCandlesByToken?.get(selectedIndicatorToken) ?? [],
+  );
   const phase6: SrFlipEvaluation = {
     ...evaluateSrFlipSignal({
       underlying: LIVE_SELECTED_UNDERLYING,
@@ -192,6 +197,7 @@ export function buildLiveMarketSnapshot({
       sessionBars: srSessionBars,
       referencePrice: srReferencePrice,
       vix: indiaVix ?? null,
+      volumeRatio,
     }),
     levelSource: srLevelSource,
   };
@@ -574,6 +580,34 @@ function fiveMinuteBars(oneMinute: MarketCandleData[]): LevelCandle[] {
   }
 
   return bars;
+}
+
+/**
+ * Latest closed 5-minute volume vs the recent average, from 1-minute futures
+ * candles. Groups 1-min bars into complete 5-min buckets, sums volume, and
+ * returns lastBucket / mean(prior up-to-20 buckets). null when there isn't
+ * enough data or no volume — the index has volume 0, so this only means
+ * anything for a futures source.
+ */
+function fiveMinuteVolumeRatio(oneMinute: IndicatorCandle[]): number | null {
+  const sorted = [...oneMinute].sort(
+    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+  );
+  const buckets: number[] = [];
+  for (let index = 0; index + 5 <= sorted.length; index += 5) {
+    const sum = sorted
+      .slice(index, index + 5)
+      .reduce((total, candle) => total + (Number(candle.volume) || 0), 0);
+    buckets.push(sum);
+  }
+  if (buckets.length < 2) return null;
+
+  const last = buckets[buckets.length - 1];
+  const prior = buckets.slice(Math.max(0, buckets.length - 21), buckets.length - 1);
+  const avg = prior.reduce((total, value) => total + value, 0) / prior.length;
+  if (!(avg > 0)) return null;
+
+  return round(last / avg, 2);
 }
 
 function completedMarketCandleFromIndicator(

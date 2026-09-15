@@ -52,6 +52,9 @@ export function vixRegime(vix: number | null | undefined): string {
   return "stressed";
 }
 
+/** A break/retest bar's volume at or above this multiple of the recent average is a "surge". */
+export const VOLUME_SURGE_RATIO = 1.3;
+
 /** VIX-scaled search window (points each side) for classifying nearby levels. */
 export function vixWindow(vix: number | null | undefined): number {
   if (vix == null) return 180;
@@ -239,6 +242,7 @@ export function evaluateSrFlipSignal({
   sessionBars,
   referencePrice,
   vix,
+  volumeRatio = null,
   params = DEFAULT_SR_FLIP_PARAMS,
 }: {
   underlying: UnderlyingSymbol;
@@ -246,6 +250,8 @@ export function evaluateSrFlipSignal({
   sessionBars: LevelCandle[];
   referencePrice: number;
   vix: number | null;
+  /** Latest 5-min futures volume / recent average, for the soft volume cue. */
+  volumeRatio?: number | null;
   params?: SrFlipParams;
 }): SrFlipEvaluation {
   // Gap/trend-day handling: once the session's realized range exceeds the VIX
@@ -287,6 +293,10 @@ export function evaluateSrFlipSignal({
         : []),
     ],
     trendRisk,
+    volumeConfirmation: {
+      ratio: volumeRatio,
+      surge: volumeRatio != null && volumeRatio >= VOLUME_SURGE_RATIO,
+    },
     liveOrdersEnabled: false,
   };
 
@@ -346,6 +356,13 @@ export function evaluateSrFlipSignal({
           reasons: [
             `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) and price retested it as ${direction === "LONG" ? "support" : "resistance"} and closed ${direction === "LONG" ? "above" : "below"} it.`,
             `Plan: enter ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, then trail the rest by ${plan.trail} (R:R ${plan.riskReward}).`,
+            ...(base.volumeConfirmation.ratio != null
+              ? [
+                  base.volumeConfirmation.surge
+                    ? `Volume confirms: this 5-min bar is ${base.volumeConfirmation.ratio.toFixed(1)}x the recent average.`
+                    : `Volume is only ${base.volumeConfirmation.ratio.toFixed(1)}x average (light) — a surge would add conviction.`,
+                ]
+              : []),
           ],
         };
       }

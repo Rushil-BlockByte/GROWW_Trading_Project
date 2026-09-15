@@ -88,6 +88,18 @@ describe("sr-flip live signal", () => {
     expect(result.trendRisk).toBe(false);
   });
 
+  it("reports the volume confirmation as a soft cue", () => {
+    const bars: LevelCandle[] = [candle(95, 90, 92, 0), candle(96, 91, 93, 1)];
+    const noVol = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 93, vix: 11 });
+    expect(noVol.volumeConfirmation).toEqual({ ratio: null, surge: false });
+
+    const surge = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 93, vix: 11, volumeRatio: 1.5 });
+    expect(surge.volumeConfirmation).toEqual({ ratio: 1.5, surge: true });
+
+    const light = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 93, vix: 11, volumeRatio: 1.0 });
+    expect(light.volumeConfirmation.surge).toBe(false);
+  });
+
   it("flags trendRisk when the session range exceeds the VIX window", () => {
     const bars: LevelCandle[] = [candle(95, 90, 92, 0), candle(300, 90, 295, 1), candle(305, 300, 302, 2)];
     const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 302, vix: 11 });
