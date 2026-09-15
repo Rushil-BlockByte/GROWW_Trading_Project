@@ -23,6 +23,7 @@ export type LevelAlertParams = {
   breakBuffer: number; // close beyond by this = broke the level
   stop: number; // stop distance beyond the level
   trail: number; // trail the runner by this after the first target
+  retestCloseMargin: number; // retest candle must CLOSE this far on the right side to confirm
 };
 
 export const DEFAULT_LEVEL_ALERT_PARAMS: LevelAlertParams = {
@@ -31,6 +32,9 @@ export const DEFAULT_LEVEL_ALERT_PARAMS: LevelAlertParams = {
   breakBuffer: 15,
   stop: 25, // matches the tested flip default (target ~40 / stop 25)
   trail: 25,
+  // Retest confirms only when the candle CLOSES on the right side of the level
+  // (5-yr backtest: 65%->71% win; wrong-side closes are 40% fakeouts).
+  retestCloseMargin: 5,
 };
 
 function nextLevelBeyond(levels: SrLevel[], from: number, direction: "up" | "down"): number | null {
@@ -124,7 +128,7 @@ export function detectLevelAlert({
   const above = referencePrice >= L;
   const role: "SUPPORT" | "RESISTANCE" = above ? "SUPPORT" : "RESISTANCE";
   const distance = Math.round(referencePrice - L);
-  const { nearDistance, touchBuffer, breakBuffer, stop, trail } = params;
+  const { nearDistance, touchBuffer, breakBuffer, stop, trail, retestCloseMargin } = params;
   const last = sessionBars[sessionBars.length - 1];
 
   const make = (
@@ -147,9 +151,9 @@ export function detectLevelAlert({
     const target = nextLevelBeyond(levels, L, "up");
     const plan = { entry: L, stop: L - stop, target: target ?? L + 60, trail };
 
-    return last.low <= L + touchBuffer
-      ? make("RETEST_CONFIRMED", "LONG", `Breakout retest confirmed at ${L} — paper LONG: entry ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, trail rest by ${trail}.`, plan)
-      : make("BROKEN", "LONG", `${L} broke up — it now flips to support. Watching for a retest.`, plan);
+    return last.low <= L + touchBuffer && last.close >= L + retestCloseMargin
+      ? make("RETEST_CONFIRMED", "LONG", `Breakout retest confirmed at ${L} (closed back above) — paper LONG: entry ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, trail rest by ${trail}.`, plan)
+      : make("BROKEN", "LONG", `${L} broke up — it now flips to support. Watching for a retest that closes above it.`, plan);
   }
 
   // Breakout (flip) — support broke down, price now below it.
@@ -157,9 +161,9 @@ export function detectLevelAlert({
     const target = nextLevelBeyond(levels, L, "down");
     const plan = { entry: L, stop: L + stop, target: target ?? L - 60, trail };
 
-    return last.high >= L - touchBuffer
-      ? make("RETEST_CONFIRMED", "SHORT", `Breakout retest confirmed at ${L} — paper SHORT: entry ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, trail rest by ${trail}.`, plan)
-      : make("BROKEN", "SHORT", `${L} broke down — it now flips to resistance. Watching for a retest.`, plan);
+    return last.high >= L - touchBuffer && last.close <= L - retestCloseMargin
+      ? make("RETEST_CONFIRMED", "SHORT", `Breakout retest confirmed at ${L} (closed back below) — paper SHORT: entry ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, trail rest by ${trail}.`, plan)
+      : make("BROKEN", "SHORT", `${L} broke down — it now flips to resistance. Watching for a retest that closes below it.`, plan);
   }
 
   // Held → ABC bounce.

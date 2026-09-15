@@ -102,6 +102,20 @@ describe("sr-flip live signal", () => {
     expect(result.plan).toMatchObject({ entry: 100, stop: 75, target: 140 });
   });
 
+  it("does NOT confirm when the retest tags the level but closes on the wrong side", () => {
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),
+      candle(122, 100, 120, 1), // break up
+      candle(125, 118, 122, 2),
+      candle(112, 104, 103, 3), // tags (low 104<=112) but closes 103 < 100+5 => fakeout
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 103, vix: 11 });
+
+    expect(result.direction).toBe("LONG");
+    expect(result.state).toBe("AWAITING_RETEST");
+    expect(result.quality).toBe("WATCH");
+  });
+
   it("flags AWAITING_RETEST when broken but price is still away", () => {
     const bars: LevelCandle[] = [
       candle(95, 88, 90, 0),
