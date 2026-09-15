@@ -2747,8 +2747,15 @@ function DecisionBanner({ strategy }: { strategy: SrFlipEvaluation }) {
   );
 }
 
+function levelAlertVariant(stage: string) {
+  if (stage === "RETEST_CONFIRMED" || stage === "ABC_FORMING") return "success" as const;
+  if (stage === "BROKEN") return "warning" as const;
+  return "outline" as const;
+}
+
 function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot }) {
   const strategy = snapshot.phase6;
+  const levelAlert = snapshot.levelAlert;
 
   return (
     <Card>
@@ -2771,6 +2778,20 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
       </CardHeader>
       <CardContent className="grid gap-4">
         <DecisionBanner strategy={strategy} />
+
+        {levelAlert && levelAlert.stage !== "NONE" ? (
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={levelAlertVariant(levelAlert.stage)}>
+                {levelAlert.stage.replace(/_/g, " ")}
+              </Badge>
+              <span className="font-medium">
+                Level {levelAlert.level} · {levelAlert.role.toLowerCase()}
+              </span>
+            </div>
+            <p className="mt-2 text-muted-foreground">{levelAlert.message}</p>
+          </div>
+        ) : null}
 
         <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-4">
           <Metric label="Direction" value={strategy.direction} />

@@ -8,6 +8,7 @@ import type { MarketDataProviderStatus } from "@/lib/providers/market-data-provi
 import { buildOptionChainContext } from "@/lib/options/chain-context";
 import { evaluateSrFlipSignal } from "@/lib/strategy/sr-flip";
 import { srFlipSignalSummary } from "@/lib/strategy/sr-flip-signal";
+import { detectLevelAlert } from "@/lib/strategy/level-alerts";
 import type { LevelCandle, SrLevel, SrLevelSource, SrFlipEvaluation } from "@/types/sr-flip";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorCandle, IndicatorContext } from "@/types/indicators";
@@ -183,16 +184,25 @@ export function buildLiveMarketSnapshot({
       sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
     }),
   );
+  const srLevels = srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [];
   const phase6: SrFlipEvaluation = {
     ...evaluateSrFlipSignal({
       underlying: LIVE_SELECTED_UNDERLYING,
-      levels: srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [],
+      levels: srLevels,
       sessionBars: srSessionBars,
       referencePrice: srReferencePrice,
       vix: indiaVix ?? null,
     }),
     levelSource: srLevelSource,
   };
+  // In-app 5-min watch runner: the staged per-level alert (NEAR / BROKEN /
+  // RETEST_CONFIRMED) on the same closed 5-min bars the flip uses, so the alert
+  // is a first-class snapshot field instead of an external polling loop.
+  const levelAlert = detectLevelAlert({
+    levels: srLevels,
+    sessionBars: srSessionBars,
+    referencePrice: srReferencePrice,
+  });
 
   return {
     generatedAt: generatedAt.toISOString(),
@@ -242,6 +252,7 @@ export function buildLiveMarketSnapshot({
     phase5,
     phase5ByUnderlying,
     phase6,
+    levelAlert,
   };
 }
 

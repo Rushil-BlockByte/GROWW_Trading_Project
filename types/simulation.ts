@@ -10,6 +10,7 @@ import type { IndicatorContext } from "@/types/indicators";
 import type { InstrumentKind } from "@/types/instruments";
 import type { OptionChainContext } from "@/types/options";
 import type { SrFlipEvaluation } from "@/types/sr-flip";
+import type { LevelAlert } from "@/lib/strategy/level-alerts";
 
 export type SimulatedUnderlying = {
   symbol: UnderlyingSymbol;
@@ -90,6 +91,8 @@ export type SimulatedMarketSnapshot = {
   phase5: OptionChainContext;
   phase5ByUnderlying?: Partial<Record<UnderlyingSymbol, OptionChainContext>>;
   phase6: SrFlipEvaluation;
+  /** Staged per-level alert (NEAR / BROKEN / RETEST_CONFIRMED) on the 5-min feed. */
+  levelAlert?: LevelAlert;
 };
 
 export type CandleConfirmation = {
