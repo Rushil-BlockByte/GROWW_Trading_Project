@@ -13,3 +13,7 @@ prisma/dev.db
 # Generated S/R level engine artifacts (machine-local, rebuilt daily)
 /data/sr-5min-cache.json
 /data/sr-anchor.json
+
+# Personal trading journal — binary + Excel lock files; kept local, not versioned
+Trading_Journal.xlsx
+~$*.xlsx
