@@ -248,7 +248,15 @@ export function evaluateSrFlipSignal({
   vix: number | null;
   params?: SrFlipParams;
 }): SrFlipEvaluation {
-  const window = vixWindow(vix);
+  // Gap/trend-day handling: once the session's realized range exceeds the VIX
+  // expectation, this is a trend day (like 2026-09-15: 474 pt range vs a 180
+  // window). Widen the level ladder to >=400 so a trending move never runs off
+  // the map, and flag the trend risk (expect momentum over mean-reversion).
+  const baseWindow = vixWindow(vix);
+  const sessionHigh = sessionBars.length ? Math.max(...sessionBars.map((b) => b.high)) : referencePrice;
+  const sessionLow = sessionBars.length ? Math.min(...sessionBars.map((b) => b.low)) : referencePrice;
+  const trendRisk = sessionHigh - sessionLow > baseWindow;
+  const window = trendRisk ? Math.max(baseWindow, 400) : baseWindow;
   const { supports, resistances, nearestSupport, nearestResistance } = classifyLevels(
     levels,
     referencePrice,
@@ -271,7 +279,14 @@ export function evaluateSrFlipSignal({
     resistances,
     plan: null,
     reasons: ["No break-and-retest setup active."],
-    risks: ["Live orders disabled.", "Paper-only workflow."],
+    risks: [
+      "Live orders disabled.",
+      "Paper-only workflow.",
+      ...(trendRisk
+        ? ["Trend day: the session range has exceeded the VIX expectation — levels widened, expect momentum over mean-reversion."]
+        : []),
+    ],
+    trendRisk,
     liveOrdersEnabled: false,
   };
 

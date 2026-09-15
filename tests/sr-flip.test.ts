@@ -85,6 +85,14 @@ describe("sr-flip live signal", () => {
     expect(result.direction).toBe("NO TRADE");
     expect(result.state).toBe("NONE");
     expect(result.liveOrdersEnabled).toBe(false);
+    expect(result.trendRisk).toBe(false);
+  });
+
+  it("flags trendRisk when the session range exceeds the VIX window", () => {
+    const bars: LevelCandle[] = [candle(95, 90, 92, 0), candle(300, 90, 295, 1), candle(305, 300, 302, 2)];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 302, vix: 11 });
+
+    expect(result.trendRisk).toBe(true); // range 215 > calm window 150
   });
 
   it("flags CONFIRMED when a broken level is being retested now", () => {

@@ -83,6 +83,8 @@ export type SrFlipEvaluation = {
   reasons: string[];
   risks: string[];
   liveOrdersEnabled: false;
+  /** True when the session range has exceeded the VIX expectation — a trend/gap day. */
+  trendRisk: boolean;
   /** Where the levels came from: the day's anchor and the 5-year history span. */
   levelSource?: SrLevelSource;
 };

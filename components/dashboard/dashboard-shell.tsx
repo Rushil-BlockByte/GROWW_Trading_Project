@@ -2773,6 +2773,7 @@ function OpportunityScanner({ snapshot }: { snapshot: SimulatedMarketSnapshot })
               {snapshot.signal.direction}
             </Badge>
             <Badge variant="outline">{strategy.state.replace(/_/g, " ")}</Badge>
+            {strategy.trendRisk ? <Badge variant="warning">Trend risk</Badge> : null}
           </div>
         </div>
       </CardHeader>
