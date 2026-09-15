@@ -9,3 +9,7 @@ coverage
 *.log
 tsconfig.tsbuildinfo
 prisma/dev.db
+
+# Generated S/R level engine artifacts (machine-local, rebuilt daily)
+/data/sr-5min-cache.json
+/data/sr-anchor.json

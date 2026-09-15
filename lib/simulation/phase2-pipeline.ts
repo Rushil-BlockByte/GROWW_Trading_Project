@@ -134,7 +134,7 @@ export function createPhase2PipelineSnapshot(
       lastCompletedCandleEnd: referenceCandle?.endTime ?? fallbackCandleEnd,
       nextConfirmationTime: referenceCandle?.endTime ?? fallbackCandleEnd,
       decisionReady: true,
-      message: "Replay snapshot uses a closed 1-minute candle for the indicator filter.",
+      message: "Replay snapshot uses a closed 5-minute candle for the break/retest pattern.",
     },
   };
 }

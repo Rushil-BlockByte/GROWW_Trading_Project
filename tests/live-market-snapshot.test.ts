@@ -245,11 +245,13 @@ describe("live market snapshot", () => {
       generatedAt: secondTickAt,
     });
 
+    // The confirmation gate now tracks the 5-minute close (the flip timeframe).
+    // Two minutes of ticks form no closed 5-minute candle yet, so the gate is
+    // still building and not decision-ready — while phase4's 1-minute indicator
+    // candle is already complete and usable.
     expect(snapshot?.phase2.candleConfirmation?.status).toBe("BUILDING");
-    expect(snapshot?.phase2.candleConfirmation?.decisionReady).toBe(true);
-    expect(snapshot?.phase2.candleConfirmation?.lastCompletedCandleEnd).toBe(
-      "2026-09-01T04:01:00.000Z",
-    );
+    expect(snapshot?.phase2.candleConfirmation?.decisionReady).toBe(false);
+    expect(snapshot?.phase2.candleConfirmation?.lastCompletedCandleEnd).toBeNull();
     expect(snapshot?.phase2.indicatorSource?.kind).toBe("FUTURE");
     expect(snapshot?.phase4.candleCount).toBe(1);
     expect(snapshot?.phase4.latestClose).toBe("25110.00");

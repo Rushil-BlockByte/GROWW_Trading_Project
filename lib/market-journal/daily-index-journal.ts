@@ -175,13 +175,13 @@ export function buildDailyIndexJournal(snapshot: SimulatedMarketSnapshot): Daily
       ? `${weakest.label} was the weakest at ${signedText(weakest.changePercent, "%")}.`
       : "No clear weak index separated from the group.",
     indicatorRead(snapshot.phase4),
-    `Scanner state: ${snapshot.phase6.state}, direction ${snapshot.phase6.direction}, score ${snapshot.phase6.score}/100.`,
+    `Scanner state: ${snapshot.phase6.state}, direction ${snapshot.phase6.direction} (${snapshot.phase6.quality}).`,
     `Option chain read: ${snapshot.phase5.tradableContracts} tradable contracts, PCR OI ${snapshot.phase5.putCallOpenInterestRatio ?? "pending"}.`,
   ];
   const nextDayPrep = [
     `Start with the strongest/weakest index relationship from today; avoid treating all indices as the same market.`,
     `Mark today's support and resistance zones, then check tomorrow whether price accepts above VWAP or rejects from it.`,
-    `Wait for a closed 1-minute candle before trusting the indicator filter.`,
+    `Wait for a closed 5-minute candle before trusting a level break or retest.`,
     `Before any paper trade, check whether the selected option has room for a clean ${targetText} move after spread and liquidity.`,
     "If the scanner still says NO TRADE, keep the day as observation and do not force an entry.",
   ];

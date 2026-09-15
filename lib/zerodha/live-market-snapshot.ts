@@ -6,14 +6,17 @@ import type { MarketStateStore } from "@/lib/market/market-state";
 import { addMinutes } from "@/lib/market/session";
 import type { MarketDataProviderStatus } from "@/lib/providers/market-data-provider";
 import { buildOptionChainContext } from "@/lib/options/chain-context";
-import { evaluateVwapBreakoutStrategy } from "@/lib/strategy/vwap-breakout";
+import { evaluateSrFlipSignal } from "@/lib/strategy/sr-flip";
+import { srFlipSignalSummary } from "@/lib/strategy/sr-flip-signal";
+import { detectLevelAlert } from "@/lib/strategy/level-alerts";
+import type { LevelCandle, SrLevel, SrLevelSource, SrFlipEvaluation } from "@/types/sr-flip";
 import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorCandle, IndicatorContext } from "@/types/indicators";
 import type { InstrumentRecord } from "@/types/instruments";
 import type { DataQualityStatus, MarketRegime, MarketTick, UnderlyingSymbol } from "@/types/market";
 import type {
   IndicatorSourceInstrument,
-  OneMinuteCandleConfirmation,
+  CandleConfirmation,
   SimulatedMarketSnapshot,
   SimulatedOptionLeg,
   SimulatedOptionRow,
@@ -53,6 +56,9 @@ export type LiveMarketSnapshotInput = {
   optionUniverse?: LiveOptionUniverseSnapshot;
   optionUniverses?: LiveOptionUniversesSnapshot;
   indicatorInstruments?: Partial<Record<UnderlyingSymbol, InstrumentRecord>>;
+  srLevelsByUnderlying?: Partial<Record<UnderlyingSymbol, SrLevel[]>>;
+  srLevelSource?: SrLevelSource;
+  indiaVix?: number | null;
   generatedAt?: Date;
 };
 
@@ -68,6 +74,9 @@ export function buildLiveMarketSnapshot({
   optionUniverse,
   optionUniverses,
   indicatorInstruments,
+  srLevelsByUnderlying,
+  srLevelSource,
+  indiaVix,
   generatedAt = new Date(),
 }: LiveMarketSnapshotInput): SimulatedMarketSnapshot | undefined {
   if (!repository || !stateStore || provider.connected === false) {
@@ -108,7 +117,7 @@ export function buildLiveMarketSnapshot({
     instrumentToken: selectedIndicatorToken,
     sessionCandles: selectedSessionCandles,
   });
-  const candleConfirmation = buildOneMinuteCandleConfirmation({
+  const candleConfirmation = buildCandleConfirmation({
     candleBuilder,
     instrumentToken: selectedIndicatorToken,
     sessionCandles: selectedSessionCandles,
@@ -166,11 +175,39 @@ export function buildLiveMarketSnapshot({
         previousDayByToken?.get(selectedIndicatorToken) ??
         previousDayFromTick(selectedIndicatorSource.state?.latestTick ?? niftyState.state.latestTick),
     });
-  const phase6 = evaluateVwapBreakoutStrategy({
-    indicator: phase4,
-    optionContext: phase5,
-    marketRegime: underlyings[0]?.regime ?? "SIDEWAYS",
-    dataQuality: stateSummary.dataQuality,
+  const srReferencePrice =
+    numberFromDecimal(niftyState.state.latestTick.lastPrice) ?? 0;
+  const srSessionBars = fiveMinuteBars(
+    liveOneMinuteMarketCandles({
+      candleBuilder,
+      instrumentToken: niftyState.instrument.instrumentToken,
+      sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
+    }),
+  );
+  const srLevels = srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [];
+  // Soft volume cue: the latest closed 5-min FUTURES volume vs its recent
+  // average (the index has no volume). Not a gate — just adds conviction.
+  const volumeRatio = fiveMinuteVolumeRatio(
+    sessionCandlesByToken?.get(selectedIndicatorToken) ?? [],
+  );
+  const phase6: SrFlipEvaluation = {
+    ...evaluateSrFlipSignal({
+      underlying: LIVE_SELECTED_UNDERLYING,
+      levels: srLevels,
+      sessionBars: srSessionBars,
+      referencePrice: srReferencePrice,
+      vix: indiaVix ?? null,
+      volumeRatio,
+    }),
+    levelSource: srLevelSource,
+  };
+  // In-app 5-min watch runner: the staged per-level alert (NEAR / BROKEN /
+  // RETEST_CONFIRMED) on the same closed 5-min bars the flip uses, so the alert
+  // is a first-class snapshot field instead of an external polling loop.
+  const levelAlert = detectLevelAlert({
+    levels: srLevels,
+    sessionBars: srSessionBars,
+    referencePrice: srReferencePrice,
   });
 
   return {
@@ -178,26 +215,7 @@ export function buildLiveMarketSnapshot({
     underlyings,
     optionChain,
     optionChains,
-    signal: {
-      id: phase6.id,
-      underlying: phase6.underlying,
-      direction: phase6.direction,
-      setupName: phase6.name,
-      score: phase6.score,
-      quality: phase6.quality,
-      suggestedOption: phase6.selectedContract?.label,
-      entryRange: phase6.entryPlan?.entryTrigger,
-      underlyingInvalidation: phase6.entryPlan
-        ? Number(phase6.entryPlan.invalidation)
-        : undefined,
-      optionStopEstimate: phase6.entryPlan ? Number(phase6.entryPlan.invalidation) : undefined,
-      targetOne: phase6.entryPlan ? Number(phase6.entryPlan.targetOne) : undefined,
-      targetTwo: phase6.entryPlan ? Number(phase6.entryPlan.targetTwo) : undefined,
-      riskReward: phase6.entryPlan?.riskReward,
-      reasons: phase6.reasons,
-      risks: phase6.risks,
-      state: phase6.state,
-    },
+    signal: srFlipSignalSummary(phase6),
     health: {
       websocket: provider.connected
         ? "CONNECTED"
@@ -240,6 +258,7 @@ export function buildLiveMarketSnapshot({
     phase5,
     phase5ByUnderlying,
     phase6,
+    levelAlert,
   };
 }
 
@@ -386,7 +405,7 @@ function buildLiveCandleConfirmationsByUnderlying({
   sessionCandlesByToken: LiveMarketSnapshotInput["sessionCandlesByToken"];
 }) {
   return DEFAULT_UNDERLYINGS.reduce<
-    Partial<Record<UnderlyingSymbol, OneMinuteCandleConfirmation>>
+    Partial<Record<UnderlyingSymbol, CandleConfirmation>>
   >((confirmations, underlying) => {
     const source = indicatorSources[underlying.symbol];
 
@@ -394,7 +413,7 @@ function buildLiveCandleConfirmationsByUnderlying({
 
     const token = source.instrument.instrumentToken;
 
-    confirmations[underlying.symbol] = buildOneMinuteCandleConfirmation({
+    confirmations[underlying.symbol] = buildCandleConfirmation({
       candleBuilder,
       instrumentToken: token,
       sessionCandles: sessionCandlesByToken?.get(token) ?? [],
@@ -538,6 +557,59 @@ function liveOneMinuteMarketCandles({
   );
 }
 
+/**
+ * Aggregate 1-minute candles into CLOSED 5-minute candles. Only complete groups
+ * of five are emitted, so the forming (not-yet-closed) 5-minute candle is
+ * dropped — levels and pattern detection wait for the 5-minute candle to close.
+ */
+function fiveMinuteBars(oneMinute: MarketCandleData[]): LevelCandle[] {
+  const sorted = [...oneMinute].sort(
+    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+  );
+  const bars: LevelCandle[] = [];
+
+  for (let index = 0; index + 5 <= sorted.length; index += 5) {
+    const group = sorted.slice(index, index + 5);
+
+    bars.push({
+      startTime: group[0].startTime,
+      high: Math.max(...group.map((candle) => Number(candle.high))),
+      low: Math.min(...group.map((candle) => Number(candle.low))),
+      close: Number(group[group.length - 1].close),
+    });
+  }
+
+  return bars;
+}
+
+/**
+ * Latest closed 5-minute volume vs the recent average, from 1-minute futures
+ * candles. Groups 1-min bars into complete 5-min buckets, sums volume, and
+ * returns lastBucket / mean(prior up-to-20 buckets). null when there isn't
+ * enough data or no volume — the index has volume 0, so this only means
+ * anything for a futures source.
+ */
+function fiveMinuteVolumeRatio(oneMinute: IndicatorCandle[]): number | null {
+  const sorted = [...oneMinute].sort(
+    (a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime(),
+  );
+  const buckets: number[] = [];
+  for (let index = 0; index + 5 <= sorted.length; index += 5) {
+    const sum = sorted
+      .slice(index, index + 5)
+      .reduce((total, candle) => total + (Number(candle.volume) || 0), 0);
+    buckets.push(sum);
+  }
+  if (buckets.length < 2) return null;
+
+  const last = buckets[buckets.length - 1];
+  const prior = buckets.slice(Math.max(0, buckets.length - 21), buckets.length - 1);
+  const avg = prior.reduce((total, value) => total + value, 0) / prior.length;
+  if (!(avg > 0)) return null;
+
+  return round(last / avg, 2);
+}
+
 function completedMarketCandleFromIndicator(
   candle: IndicatorCandle,
   instrumentToken: number,
@@ -558,7 +630,7 @@ function completedMarketCandleFromIndicator(
   };
 }
 
-function buildOneMinuteCandleConfirmation({
+function buildCandleConfirmation({
   candleBuilder,
   instrumentToken,
   sessionCandles = [],
@@ -566,44 +638,48 @@ function buildOneMinuteCandleConfirmation({
   candleBuilder: LiveMarketSnapshotInput["candleBuilder"];
   instrumentToken: number;
   sessionCandles?: IndicatorCandle[];
-}): OneMinuteCandleConfirmation {
-  const completedCandles = liveOneMinuteMarketCandles({
-    candleBuilder,
-    instrumentToken,
-    sessionCandles,
-  });
+}): CandleConfirmation {
+  // Closed 5-minute bars from the same 1-minute stream the flip strategy uses,
+  // so the gate matches the timeframe levels and the break/retest run on.
+  const fiveMinBars = fiveMinuteBars(
+    liveOneMinuteMarketCandles({ candleBuilder, instrumentToken, sessionCandles }),
+  );
+  const lastClosed = fiveMinBars.at(-1) ?? null;
+  const lastClosedStart = lastClosed?.startTime ?? null;
+  const lastClosedEnd = lastClosed ? fiveMinuteEndTime(lastClosed.startTime) : null;
+  const decisionReady = Boolean(lastClosed);
+
+  // The forming (not-yet-closed) 5-minute candle from the live builder.
   const currentCandle =
     candleBuilder
       ?.getActiveCandles()
-      .find((candle) => candle.instrumentToken === instrumentToken && candle.interval === "1m") ?? null;
-  const lastCompletedCandle = completedCandles.at(-1) ?? null;
-  const decisionReady = Boolean(lastCompletedCandle);
+      .find((candle) => candle.instrumentToken === instrumentToken && candle.interval === "5m") ?? null;
 
   if (currentCandle) {
     return {
       status: "BUILDING",
       currentCandleStart: currentCandle.startTime,
       currentCandleEnd: currentCandle.endTime,
-      lastCompletedCandleStart: lastCompletedCandle?.startTime ?? null,
-      lastCompletedCandleEnd: lastCompletedCandle?.endTime ?? null,
+      lastCompletedCandleStart: lastClosedStart,
+      lastCompletedCandleEnd: lastClosedEnd,
       nextConfirmationTime: currentCandle.endTime,
       decisionReady,
       message: decisionReady
-        ? "Use the last closed 1-minute candle; the current candle is still building."
-        : "Wait for the first 1-minute candle to close before taking a paper trade.",
+        ? "Use the last closed 5-minute candle; the current 5-minute candle is still building."
+        : "Wait for the first 5-minute candle to close before taking a paper trade.",
     };
   }
 
-  if (lastCompletedCandle) {
+  if (lastClosed) {
     return {
       status: "CONFIRMED",
       currentCandleStart: null,
       currentCandleEnd: null,
-      lastCompletedCandleStart: lastCompletedCandle.startTime,
-      lastCompletedCandleEnd: lastCompletedCandle.endTime,
-      nextConfirmationTime: lastCompletedCandle.endTime,
+      lastCompletedCandleStart: lastClosedStart,
+      lastCompletedCandleEnd: lastClosedEnd,
+      nextConfirmationTime: lastClosedEnd,
       decisionReady: true,
-      message: "Latest 1-minute candle is closed and ready for the indicator filter.",
+      message: "Latest 5-minute candle is closed — levels and the break/retest pattern are updated.",
     };
   }
 
@@ -615,7 +691,7 @@ function buildOneMinuteCandleConfirmation({
     lastCompletedCandleEnd: null,
     nextConfirmationTime: null,
     decisionReady: false,
-    message: "Waiting for live ticks to build the first 1-minute candle.",
+    message: "Waiting for live ticks to build the first 5-minute candle.",
   };
 }
 
@@ -623,6 +699,12 @@ function oneMinuteEndTime(startTime: string) {
   const parsed = new Date(startTime);
 
   return Number.isNaN(parsed.getTime()) ? startTime : addMinutes(parsed, 1).toISOString();
+}
+
+function fiveMinuteEndTime(startTime: string) {
+  const parsed = new Date(startTime);
+
+  return Number.isNaN(parsed.getTime()) ? startTime : addMinutes(parsed, 5).toISOString();
 }
 
 function buildLiveOptionChainsByUnderlying({

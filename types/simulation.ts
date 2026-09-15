@@ -9,7 +9,8 @@ import type { MarketCandleData } from "@/types/candles";
 import type { IndicatorContext } from "@/types/indicators";
 import type { InstrumentKind } from "@/types/instruments";
 import type { OptionChainContext } from "@/types/options";
-import type { StrategyEvaluation } from "@/types/strategy";
+import type { SrFlipEvaluation } from "@/types/sr-flip";
+import type { LevelAlert } from "@/lib/strategy/level-alerts";
 
 export type SimulatedUnderlying = {
   symbol: UnderlyingSymbol;
@@ -89,10 +90,12 @@ export type SimulatedMarketSnapshot = {
   phase4ByUnderlying?: Partial<Record<UnderlyingSymbol, IndicatorContext>>;
   phase5: OptionChainContext;
   phase5ByUnderlying?: Partial<Record<UnderlyingSymbol, OptionChainContext>>;
-  phase6: StrategyEvaluation;
+  phase6: SrFlipEvaluation;
+  /** Staged per-level alert (NEAR / BROKEN / RETEST_CONFIRMED) on the 5-min feed. */
+  levelAlert?: LevelAlert;
 };
 
-export type OneMinuteCandleConfirmation = {
+export type CandleConfirmation = {
   status: "WAITING_FOR_TICK" | "BUILDING" | "CONFIRMED";
   currentCandleStart: string | null;
   currentCandleEnd: string | null;
@@ -128,6 +131,6 @@ export type SimulatedPhase2Pipeline = {
   indicatorSources?: Partial<Record<UnderlyingSymbol, IndicatorSourceInstrument>>;
   activeCandles: MarketCandleData[];
   completedCandleCount: number;
-  candleConfirmation?: OneMinuteCandleConfirmation;
-  candleConfirmations?: Partial<Record<UnderlyingSymbol, OneMinuteCandleConfirmation>>;
+  candleConfirmation?: CandleConfirmation;
+  candleConfirmations?: Partial<Record<UnderlyingSymbol, CandleConfirmation>>;
 };

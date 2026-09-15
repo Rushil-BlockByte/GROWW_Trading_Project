@@ -36,23 +36,16 @@ function confirmedSnapshot(): SimulatedMarketSnapshot {
     },
     phase6: {
       ...snapshot.phase6,
-      bias: "BULLISH",
-      direction: "BULLISH",
+      direction: "LONG",
       state: "CONFIRMED",
-      selectedContract: {
-        side: "CE",
-        strike: 25200,
-        label: "NIFTY 2026-09-03 25200 CE",
-        ltp: "100.00",
-        status: "TRADABLE",
-        reason: "Nearest liquid contract.",
-      },
-      entryPlan: {
-        entryTrigger: "25215.00",
-        invalidation: "25185.00",
-        targetOne: "25275.00",
-        targetTwo: "25320.00",
-        riskReward: "2.00",
+      quality: "READY",
+      plan: {
+        level: 25200,
+        entry: 25200,
+        stop: 25170,
+        target: 25250,
+        trail: 25,
+        riskReward: "1.67",
       },
       liveOrdersEnabled: false,
     },
@@ -90,7 +83,7 @@ describe("persistence mapping", () => {
       risk: {
         ...DEFAULT_RISK_CONFIGURATION,
         tradingCapital: "100000",
-        riskPerTradePercent: "2",
+        riskPerTradePercent: "3",
       },
     });
     const data = paperJournalEntryPersistenceData({
@@ -102,8 +95,8 @@ describe("persistence mapping", () => {
     expect(canPersistStructuredPaperTrade(entry)).toBe(true);
     expect(data.type).toBe("PAPER_TRADE");
     expect(data.paperTradeId).toBe("paper-trade-1");
-    expect(data.entryPrice).toBe("100.00");
-    expect(data.stopPrice).toBe("80.00");
+    expect(data.entryPrice).toBe("25200.00");
+    expect(data.stopPrice).toBe("25170.00");
     expect(data.quantity).toBe(75);
   });
 

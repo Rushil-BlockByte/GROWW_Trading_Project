@@ -27,23 +27,16 @@ function confirmedSnapshot(): SimulatedMarketSnapshot {
     },
     phase6: {
       ...snapshot.phase6,
-      bias: "BULLISH",
-      direction: "BULLISH",
+      direction: "LONG",
       state: "CONFIRMED",
-      selectedContract: {
-        side: "CE",
-        strike: 25200,
-        label: "NIFTY 2026-09-03 25200 CE",
-        ltp: "100.00",
-        status: "TRADABLE",
-        reason: "Nearest liquid contract.",
-      },
-      entryPlan: {
-        entryTrigger: "25215.00",
-        invalidation: "25185.00",
-        targetOne: "25275.00",
-        targetTwo: "25320.00",
-        riskReward: "2.00",
+      quality: "READY",
+      plan: {
+        level: 25200,
+        entry: 25200,
+        stop: 25170,
+        target: 25250,
+        trail: 25,
+        riskReward: "1.67",
       },
       liveOrdersEnabled: false,
     },
@@ -55,10 +48,10 @@ describe("paper-trade journal", () => {
     const guard = canCreatePaperTrade(createInitialMarketSnapshot());
 
     expect(guard.allowed).toBe(false);
-    expect(guard.reason).toBe("Strategy setup is not confirmed.");
+    expect(guard.reason).toBe("No confirmed break-and-retest setup.");
   });
 
-  it("blocks paper-trade capture until a closed 1-minute candle is ready", () => {
+  it("blocks paper-trade capture until a closed 5-minute candle is ready", () => {
     const snapshot = confirmedSnapshot();
     const guard = canCreatePaperTrade({
       ...snapshot,
@@ -67,19 +60,19 @@ describe("paper-trade journal", () => {
         candleConfirmation: {
           status: "BUILDING",
           currentCandleStart: "2026-09-01T04:30:00.000Z",
-          currentCandleEnd: "2026-09-01T04:31:00.000Z",
+          currentCandleEnd: "2026-09-01T04:35:00.000Z",
           lastCompletedCandleStart: null,
           lastCompletedCandleEnd: null,
-          nextConfirmationTime: "2026-09-01T04:31:00.000Z",
+          nextConfirmationTime: "2026-09-01T04:35:00.000Z",
           decisionReady: false,
-          message: "Wait for the first 1-minute candle to close before taking a paper trade.",
+          message: "Wait for the first 5-minute candle to close before taking a paper trade.",
         },
       },
     });
 
     expect(guard.allowed).toBe(false);
     expect(guard.reason).toBe(
-      "Wait for the first 1-minute candle to close before taking a paper trade.",
+      "Wait for the first 5-minute candle to close before taking a paper trade.",
     );
   });
 
@@ -122,7 +115,7 @@ describe("paper-trade journal", () => {
       risk: {
         ...DEFAULT_RISK_CONFIGURATION,
         tradingCapital: "100000",
-        riskPerTradePercent: "2",
+        riskPerTradePercent: "3",
       },
     });
 
@@ -130,10 +123,10 @@ describe("paper-trade journal", () => {
     expect(entry.status).toBe("OPEN");
     expect(entry.optionSide).toBe("CE");
     expect(entry.tradeSide).toBe("LONG_CALL");
-    expect(entry.entryPrice).toBe("100.00");
-    expect(entry.stopPrice).toBe("80.00");
-    expect(entry.targetOne).toBe("112.00");
-    expect(entry.targetTwo).toBe("120.00");
+    expect(entry.entryPrice).toBe("25200.00");
+    expect(entry.stopPrice).toBe("25170.00");
+    expect(entry.targetOne).toBe("25250.00");
+    expect(entry.targetTwo).toBeNull();
     expect(entry.quantity).toBe(75);
     expect(entry.lots).toBe(1);
     expect(entry.ruleViolations).toEqual([]);
@@ -147,7 +140,7 @@ describe("paper-trade journal", () => {
         notes: "",
         snapshot: createInitialMarketSnapshot(),
       }),
-    ).toThrow("Strategy setup is not confirmed.");
+    ).toThrow("No confirmed break-and-retest setup.");
   });
 
   it("closes an open paper trade and calculates realized P&L", () => {
@@ -159,17 +152,17 @@ describe("paper-trade journal", () => {
       risk: {
         ...DEFAULT_RISK_CONFIGURATION,
         tradingCapital: "100000",
-        riskPerTradePercent: "2",
+        riskPerTradePercent: "3",
       },
     });
     const closed = closePaperTrade({
       entry,
-      exitPrice: "110",
+      exitPrice: "25250",
       now: "2026-09-01T05:00:00.000Z",
     });
 
     expect(closed.status).toBe("CLOSED");
-    expect(closed.realizedPnl).toBe("750.00");
+    expect(closed.realizedPnl).toBe("3750.00");
     expect(closed.unrealizedPnl).toBe("0.00");
   });
 
@@ -188,12 +181,12 @@ describe("paper-trade journal", () => {
       risk: {
         ...DEFAULT_RISK_CONFIGURATION,
         tradingCapital: "100000",
-        riskPerTradePercent: "2",
+        riskPerTradePercent: "3",
       },
     });
     const closedTrade = closePaperTrade({
       entry: trade,
-      exitPrice: "95",
+      exitPrice: "25150",
       now: "2026-09-01T05:00:00.000Z",
     });
 
@@ -202,7 +195,7 @@ describe("paper-trade journal", () => {
       notes: 1,
       openTrades: 0,
       closedTrades: 1,
-      realizedPnl: "-375.00",
+      realizedPnl: "-3750.00",
       unrealizedPnl: "0.00",
     });
   });
