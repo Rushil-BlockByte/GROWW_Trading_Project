@@ -319,6 +319,24 @@ export function evaluateSrFlipSignal({
       const direction: "LONG" | "SHORT" = brokeUp ? "LONG" : "SHORT";
       const plan = buildPlan(level.price, direction, params);
 
+      // The retest must land on a candle AFTER the break: a break candle cannot
+      // be its own retest. A breakdown/breakout candle's wick usually still tags
+      // the level while it closes beyond it, which would otherwise fire a signal
+      // on the break bar itself (entering ~1 candle early, before the real
+      // pullback). Wait for a later candle. (Matches findFlipTrades' j = k + 1.)
+      if (lastIndex === k) {
+        return {
+          ...base,
+          direction,
+          state: "AWAITING_RETEST",
+          quality: "WATCH",
+          plan,
+          reasons: [
+            `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) on the latest candle. Waiting for a pullback to retest it.`,
+          ],
+        };
+      }
+
       // Has price broken back through since the break? -> invalidated
       const brokeBack = sessionBars
         .slice(k + 1)

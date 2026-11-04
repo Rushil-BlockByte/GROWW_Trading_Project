@@ -147,6 +147,35 @@ describe("sr-flip live signal", () => {
     expect(result.state).toBe("AWAITING_RETEST");
     expect(result.direction).toBe("LONG");
   });
+
+  // Regression (2026-11-04 10:30 SHORT @23835): the break candle must NOT count
+  // as its own retest. A down-break candle comes from above, so its high still
+  // tags the level while it closes below — which used to fire CONFIRMED on the
+  // break bar itself, entering ~1 candle early before the real pullback.
+  it("does NOT confirm on the break candle itself (retest must be a later bar)", () => {
+    const bars: LevelCandle[] = [
+      candle(112, 105, 110, 0), // above the level
+      candle(108, 82, 84, 1),   // break DOWN and current bar: high 108 tags (>=88), close 84 (<=95)
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 84, vix: 11 });
+
+    expect(result.direction).toBe("SHORT");
+    expect(result.state).toBe("AWAITING_RETEST"); // was wrongly CONFIRMED before the fix
+    expect(result.quality).toBe("WATCH");
+  });
+
+  it("confirms a SHORT when a LATER candle genuinely retests the broken level", () => {
+    const bars: LevelCandle[] = [
+      candle(112, 105, 110, 0), // above the level
+      candle(108, 82, 84, 1),   // break DOWN (not the current bar now)
+      candle(98, 86, 88, 2),    // later bar retests: high 98 tags (>=88), closes 88 (<=95)
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 88, vix: 11 });
+
+    expect(result.direction).toBe("SHORT");
+    expect(result.state).toBe("CONFIRMED");
+    expect(result.plan).toMatchObject({ entry: 100, stop: 125, target: 60 });
+  });
 });
 
 describe("sr-flip helpers", () => {
