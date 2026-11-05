@@ -304,100 +304,162 @@ export function evaluateSrFlipSignal({
     return base;
   }
 
-  // Find the most recent break of a strong level within the session.
-  const { breakBuffer, retestBars, touchBuffer, retestCloseMargin } = params;
+  // Find the best active break-and-retest setup across ALL strong levels.
+  // The previous version scanned backward and returned on the FIRST (most
+  // recent) break, then confirmed only if the retest landed on the single
+  // latest candle. On a trending day a fresh break fires almost every candle,
+  // so a genuine CONFIRMED retest was overwritten within one bar and the live
+  // snapshot almost never surfaced it (it decayed into "break-and-go"). We now
+  // scan FORWARD from each level's most recent break for the first confirming
+  // retest (matching findFlipTrades), keep that CONFIRMED setup live across its
+  // window, and prioritise a confirmed retest over a newer naked break.
+  const { breakBuffer, retestBars, touchBuffer, target, stop, retestCloseMargin } = params;
   const lastIndex = sessionBars.length - 1;
 
-  for (let k = lastIndex; k >= 1; k -= 1) {
-    for (const level of levels) {
-      const brokeUp = sessionBars[k - 1].close <= level.price && sessionBars[k].close >= level.price + breakBuffer;
-      const brokeDown = sessionBars[k - 1].close >= level.price && sessionBars[k].close <= level.price - breakBuffer;
+  type ActiveSetup = {
+    level: SrLevel;
+    direction: "LONG" | "SHORT";
+    breakIndex: number;
+    retestIndex: number; // -1 awaiting, >=0 confirmed+live, -2 played out
+    invalidated: boolean;
+    brokeOnLatest: boolean;
+  };
 
-      if (!brokeUp && !brokeDown) continue;
-      if (lastIndex - k > retestBars) continue; // break too old to still be live
+  const setups: ActiveSetup[] = [];
 
-      const direction: "LONG" | "SHORT" = brokeUp ? "LONG" : "SHORT";
-      const plan = buildPlan(level.price, direction, params);
-
-      // The retest must land on a candle AFTER the break: a break candle cannot
-      // be its own retest. A breakdown/breakout candle's wick usually still tags
-      // the level while it closes beyond it, which would otherwise fire a signal
-      // on the break bar itself (entering ~1 candle early, before the real
-      // pullback). Wait for a later candle. (Matches findFlipTrades' j = k + 1.)
-      if (lastIndex === k) {
-        return {
-          ...base,
-          direction,
-          state: "AWAITING_RETEST",
-          quality: "WATCH",
-          plan,
-          reasons: [
-            `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) on the latest candle. Waiting for a pullback to retest it.`,
-          ],
-        };
+  for (const level of levels) {
+    // Most recent break of this level.
+    let breakIndex = -1;
+    let direction: "LONG" | "SHORT" = "LONG";
+    for (let i = lastIndex; i >= 1; i -= 1) {
+      const brokeUp = sessionBars[i - 1].close <= level.price && sessionBars[i].close >= level.price + breakBuffer;
+      const brokeDown = sessionBars[i - 1].close >= level.price && sessionBars[i].close <= level.price - breakBuffer;
+      if (brokeUp || brokeDown) {
+        breakIndex = i;
+        direction = brokeUp ? "LONG" : "SHORT";
+        break;
       }
+    }
 
-      // Has price broken back through since the break? -> invalidated
-      const brokeBack = sessionBars
-        .slice(k + 1)
-        .some((bar) => (direction === "LONG" ? bar.close < level.price - breakBuffer : bar.close > level.price + breakBuffer));
+    if (breakIndex < 0) continue;
+    if (lastIndex - breakIndex > retestBars) continue; // break too old to still be live
 
-      if (brokeBack) {
-        return {
-          ...base,
-          state: "INVALIDATED",
-          reasons: [`Broke ${direction === "LONG" ? "above" : "below"} ${level.price} but reversed back through it.`],
-        };
+    // Scan FORWARD from the break for the first confirming retest: a candle that
+    // tags the level (without plunging more than the break buffer back through
+    // it) AND closes back on the correct side by the margin. A close back
+    // through the level before that invalidates the setup. Mirrors findFlipTrades.
+    let retestIndex = -1;
+    let invalidated = false;
+    for (let j = breakIndex + 1; j <= Math.min(breakIndex + retestBars, lastIndex); j += 1) {
+      const closedBack =
+        direction === "LONG"
+          ? sessionBars[j].close < level.price - breakBuffer
+          : sessionBars[j].close > level.price + breakBuffer;
+      if (closedBack) {
+        invalidated = true;
+        break;
       }
-
-      // Is price currently retesting the flipped level? The retest confirms only
-      // when the current (closed) candle both tags the level AND closes on the
-      // correct side of it by the margin — a wick tag that closes back through is
-      // a fakeout, so we keep waiting rather than fire a signal.
-      const current = sessionBars[lastIndex];
       const tagged =
         direction === "LONG"
-          ? current.low <= level.price + touchBuffer
-          : current.high >= level.price - touchBuffer;
+          ? sessionBars[j].low <= level.price + touchBuffer && sessionBars[j].low >= level.price - breakBuffer
+          : sessionBars[j].high >= level.price - touchBuffer && sessionBars[j].high <= level.price + breakBuffer;
       const closedRight =
         direction === "LONG"
-          ? current.close >= level.price + retestCloseMargin
-          : current.close <= level.price - retestCloseMargin;
-
+          ? sessionBars[j].close >= level.price + retestCloseMargin
+          : sessionBars[j].close <= level.price - retestCloseMargin;
       if (tagged && closedRight) {
-        return {
-          ...base,
-          direction,
-          state: "CONFIRMED",
-          quality: "READY",
-          plan,
-          reasons: [
-            `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) and price retested it as ${direction === "LONG" ? "support" : "resistance"} and closed ${direction === "LONG" ? "above" : "below"} it.`,
-            `Plan: enter ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, then trail the rest by ${plan.trail} (R:R ${plan.riskReward}).`,
-            ...(base.volumeConfirmation.ratio != null
-              ? [
-                  base.volumeConfirmation.surge
-                    ? `Volume confirms: this 5-min bar is ${base.volumeConfirmation.ratio.toFixed(1)}x the recent average.`
-                    : `Volume is only ${base.volumeConfirmation.ratio.toFixed(1)}x average (light) — a surge would add conviction.`,
-                ]
-              : []),
-          ],
-        };
+        retestIndex = j;
+        break;
       }
-
-      return {
-        ...base,
-        direction,
-        state: "AWAITING_RETEST",
-        quality: "WATCH",
-        plan,
-        reasons: [
-          tagged
-            ? `${level.price} broke ${direction === "LONG" ? "up" : "down"} and price tagged it, but the candle did not close ${direction === "LONG" ? "above" : "below"} it — waiting for a confirming close.`
-            : `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches). Waiting for a pullback to retest it.`,
-        ],
-      };
     }
+
+    // A confirmed setup stays live only while the trade is still at its entry:
+    // once price has reached the first target or the stop, the signal has played
+    // out and must not keep surfacing as a fresh entry.
+    if (retestIndex >= 0 && !invalidated) {
+      const entry = level.price;
+      const stopPrice = direction === "LONG" ? entry - stop : entry + stop;
+      const targetPrice = direction === "LONG" ? entry + target : entry - target;
+      for (let j = retestIndex; j <= lastIndex; j += 1) {
+        const hitStop = direction === "LONG" ? sessionBars[j].low <= stopPrice : sessionBars[j].high >= stopPrice;
+        const hitTarget = direction === "LONG" ? sessionBars[j].high >= targetPrice : sessionBars[j].low <= targetPrice;
+        if (hitStop || hitTarget) {
+          retestIndex = -2; // played out — no longer a fresh entry
+          break;
+        }
+      }
+    }
+
+    setups.push({
+      level,
+      direction,
+      breakIndex,
+      retestIndex,
+      invalidated,
+      brokeOnLatest: breakIndex === lastIndex,
+    });
+  }
+
+  // Rank: a fresh CONFIRMED retest (most recent) beats a naked break (most
+  // recent), which beats an invalidated one. This is what stops a brand-new
+  // break on a trending day from burying a just-confirmed retest.
+  const confirmedSetup = setups
+    .filter((s) => s.retestIndex >= 0 && !s.invalidated)
+    .sort((a, b) => b.retestIndex - a.retestIndex)[0];
+  const pendingSetup = setups
+    .filter((s) => s.retestIndex === -1 && !s.invalidated)
+    .sort((a, b) => b.breakIndex - a.breakIndex)[0];
+  const invalidSetup = setups
+    .filter((s) => s.invalidated)
+    .sort((a, b) => b.breakIndex - a.breakIndex)[0];
+
+  if (confirmedSetup) {
+    const { level, direction } = confirmedSetup;
+    const plan = buildPlan(level.price, direction, params);
+    return {
+      ...base,
+      direction,
+      state: "CONFIRMED",
+      quality: "READY",
+      plan,
+      reasons: [
+        `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) and price retested it as ${direction === "LONG" ? "support" : "resistance"} and closed ${direction === "LONG" ? "above" : "below"} it.`,
+        `Plan: enter ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, then trail the rest by ${plan.trail} (R:R ${plan.riskReward}).`,
+        ...(base.volumeConfirmation.ratio != null
+          ? [
+              base.volumeConfirmation.surge
+                ? `Volume confirms: this 5-min bar is ${base.volumeConfirmation.ratio.toFixed(1)}x the recent average.`
+                : `Volume is only ${base.volumeConfirmation.ratio.toFixed(1)}x average (light) — a surge would add conviction.`,
+            ]
+          : []),
+      ],
+    };
+  }
+
+  if (pendingSetup) {
+    const { level, direction, brokeOnLatest } = pendingSetup;
+    const plan = buildPlan(level.price, direction, params);
+    return {
+      ...base,
+      direction,
+      state: "AWAITING_RETEST",
+      quality: "WATCH",
+      plan,
+      reasons: [
+        brokeOnLatest
+          ? `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) on the latest candle. Waiting for a pullback to retest it.`
+          : `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches). Waiting for a pullback to retest it.`,
+      ],
+    };
+  }
+
+  if (invalidSetup) {
+    const { level, direction } = invalidSetup;
+    return {
+      ...base,
+      state: "INVALIDATED",
+      reasons: [`Broke ${direction === "LONG" ? "above" : "below"} ${level.price} but reversed back through it.`],
+    };
   }
 
   return base;

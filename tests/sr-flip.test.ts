@@ -176,6 +176,59 @@ describe("sr-flip live signal", () => {
     expect(result.state).toBe("CONFIRMED");
     expect(result.plan).toMatchObject({ entry: 100, stop: 125, target: 60 });
   });
+  // Regression (2026-11-05, the "no clean signals on a trend day" bug): a retest
+  // that confirmed on an EARLIER candle must stay CONFIRMED while the trade is
+  // still live, even though the latest candle no longer tags the level. The old
+  // code only confirmed when the current candle was the retest, so a confirmed
+  // setup evaporated after one bar and the watcher never caught it.
+  it("keeps a confirmed retest live after the retest candle (persistence)", () => {
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),
+      candle(122, 100, 120, 1), // break up
+      candle(115, 108, 110, 2), // retest confirms here (low 108 <= 112, closes 110)
+      candle(120, 114, 118, 3), // latest bar no longer tags (low 114 > 112), trade still live
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 118, vix: 11 });
+
+    expect(result.direction).toBe("LONG");
+    expect(result.state).toBe("CONFIRMED"); // was wrongly AWAITING_RETEST before the fix
+    expect(result.plan).toMatchObject({ entry: 100, stop: 75, target: 140 });
+  });
+
+  // Regression: a brand-new break on a DIFFERENT level must not bury a still-live
+  // confirmed retest. On a trending day a fresh level broke almost every candle,
+  // and the old backward-scan returned that newest naked break instead of the
+  // confirmed trade — which is why every signal decayed into "break-and-go".
+  it("prioritises a live confirmed retest over a newer naked break", () => {
+    const twoLevels: SrLevel[] = [level, { price: 120, touches: 6, firstIndex: 0, lastIndex: 0 }];
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),
+      candle(122, 100, 120, 1), // break up 100
+      candle(118, 108, 110, 2), // retest 100 confirms (low 108 <= 112, closes 110)
+      candle(119, 109, 117, 3), // below 120, sets up its break
+      candle(139, 120, 137, 4), // 120 breaks on the LATEST candle (prev close 117 <= 120, close 137 >= 135)
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: twoLevels, sessionBars: bars, referencePrice: 137, vix: 11 });
+
+    expect(result.state).toBe("CONFIRMED"); // the 100 flip, not AWAITING_RETEST on 120
+    expect(result.plan).toMatchObject({ entry: 100, target: 140 });
+  });
+
+  // Regression: once price has reached the target (or stop), the setup has played
+  // out and must not keep surfacing as a fresh CONFIRMED entry.
+  it("stops surfacing a confirmed setup once it has hit its target", () => {
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),
+      candle(122, 100, 120, 1), // break up
+      candle(118, 108, 110, 2), // retest confirms
+      candle(145, 112, 142, 3), // target 140 hit -> setup played out
+      candle(141, 135, 138, 4), // later bar: must NOT re-fire the same entry
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 138, vix: 11 });
+
+    expect(result.state).not.toBe("CONFIRMED");
+  });
+
 });
 
 describe("sr-flip helpers", () => {
