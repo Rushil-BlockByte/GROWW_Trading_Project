@@ -232,6 +232,38 @@ function buildPlan(level: number, direction: "LONG" | "SHORT", params: SrFlipPar
   };
 }
 
+/** Backtest: flips that ran more than this many points past the level before
+ * the retest win ~78% vs ~66% ("ran far" = proven thrust). */
+const EXT_RAN_FAR = 34;
+
+/**
+ * Conviction tier for a CONFIRMED flip, from two backtested features (5yr):
+ *  - aligned: the flip goes WITH the session's move so far (74% vs 68% win)
+ *  - ranFar:  price ran >34pt past the level before retesting (78% vs 66% win)
+ * HIGH = both, MED = one, LOW = neither. All three tiers are profitable, so this
+ * is a SIZING cue (bet more on HIGH, less on LOW) — never a filter, and never a
+ * reason to widen or skip the stop.
+ */
+function scoreConviction(
+  bars: LevelCandle[],
+  level: number,
+  direction: "LONG" | "SHORT",
+  breakIndex: number,
+  retestIndex: number,
+): { tier: "HIGH" | "MED" | "LOW"; aligned: boolean; ranFar: boolean; extension: number } {
+  const open = bars[0]?.close ?? level;
+  const now = bars[bars.length - 1]?.close ?? level;
+  const aligned = direction === "LONG" ? now > open : now < open;
+  const seg = bars.slice(breakIndex, retestIndex + 1);
+  const extension =
+    direction === "LONG"
+      ? Math.max(...seg.map((b) => b.high)) - level
+      : level - Math.min(...seg.map((b) => b.low));
+  const ranFar = extension > EXT_RAN_FAR;
+  const score = (aligned ? 1 : 0) + (ranFar ? 1 : 0);
+  const tier: "HIGH" | "MED" | "LOW" = score === 2 ? "HIGH" : score === 1 ? "MED" : "LOW";
+  return { tier, aligned, ranFar, extension };
+}
 /**
  * Live evaluation: given the strong levels and the current session's candles,
  * report the nearest support/resistance and any active break-and-retest flip.
@@ -414,17 +446,21 @@ export function evaluateSrFlipSignal({
     .sort((a, b) => b.breakIndex - a.breakIndex)[0];
 
   if (confirmedSetup) {
-    const { level, direction } = confirmedSetup;
+    const { level, direction, breakIndex, retestIndex } = confirmedSetup;
     const plan = buildPlan(level.price, direction, params);
+    const conv = scoreConviction(sessionBars, level.price, direction, breakIndex, retestIndex);
     return {
       ...base,
       direction,
       state: "CONFIRMED",
       quality: "READY",
       plan,
+      conviction: conv.tier,
+      convictionFactors: { aligned: conv.aligned, ranFar: conv.ranFar, extension: Math.round(conv.extension) },
       reasons: [
         `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) and price retested it as ${direction === "LONG" ? "support" : "resistance"} and closed ${direction === "LONG" ? "above" : "below"} it.`,
-        `Plan: enter ${plan.entry}, stop ${plan.stop}, bank half at ${plan.target}, then trail the rest by ${plan.trail} (R:R ${plan.riskReward}).`,
+        `Conviction ${conv.tier}: ${conv.aligned ? "with the day's move" : "against the day's move"}; ${conv.ranFar ? `ran ${Math.round(conv.extension)}pts past the level before the retest` : `only ${Math.round(conv.extension)}pts past the level`}.`,
+        `Plan: enter near ${plan.entry} (don't chase past +15), stop ${plan.stop}, bank half at ${plan.target}, then trail the rest by ${plan.trail} (R:R ${plan.riskReward}).`,
         ...(base.volumeConfirmation.ratio != null
           ? [
               base.volumeConfirmation.surge
@@ -445,9 +481,10 @@ export function evaluateSrFlipSignal({
       state: "AWAITING_RETEST",
       quality: "WATCH",
       plan,
+      freshBreak: brokeOnLatest,
       reasons: [
         brokeOnLatest
-          ? `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) on the latest candle. Waiting for a pullback to retest it.`
+          ? `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches) on the latest candle. Arm a ${direction === "LONG" ? "BUY" : "SELL"} limit at ${level.price} (stop ${plan.stop}) and wait for the retest.`
           : `${level.price} broke ${direction === "LONG" ? "up" : "down"} (${level.touches} touches). Waiting for a pullback to retest it.`,
       ],
     };

@@ -91,6 +91,12 @@ export type SrFlipEvaluation = {
    * null when no volume feed is available.
    */
   volumeConfirmation: { ratio: number | null; surge: boolean };
+  /** Conviction tier for a CONFIRMED flip (backtested: trend alignment + extension run). A SIZING cue, not a filter. */
+  conviction?: "HIGH" | "MED" | "LOW" | null;
+  /** The factors behind the conviction tier. */
+  convictionFactors?: { aligned: boolean; ranFar: boolean; extension: number } | null;
+  /** True when a level broke on the latest candle — arm a limit at the level now (break-stage alert). */
+  freshBreak?: boolean;
   /** Where the levels came from: the day's anchor and the 5-year history span. */
   levelSource?: SrLevelSource;
 };

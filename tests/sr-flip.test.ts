@@ -229,6 +229,48 @@ describe("sr-flip live signal", () => {
     expect(result.state).not.toBe("CONFIRMED");
   });
 
+  it("flags freshBreak on the break candle (arm-a-limit stage)", () => {
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),
+      candle(122, 100, 120, 1), // break up on the LATEST candle
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 120, vix: 11 });
+
+    expect(result.state).toBe("AWAITING_RETEST");
+    expect(result.direction).toBe("LONG");
+    expect(result.freshBreak).toBe(true);
+  });
+
+  it("tags a confirmed flip HIGH when aligned with the day AND price ran far", () => {
+    const bars: LevelCandle[] = [
+      candle(95, 88, 90, 0),   // session start (open proxy 90)
+      candle(122, 100, 120, 1), // break up
+      candle(140, 118, 135, 2), // ran +40 past the level (ranFar)
+      candle(116, 108, 112, 3), // retest confirms; close 112 > open 90 (aligned)
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: supports, sessionBars: bars, referencePrice: 112, vix: 11 });
+
+    expect(result.state).toBe("CONFIRMED");
+    expect(result.conviction).toBe("HIGH");
+    expect(result.convictionFactors).toMatchObject({ aligned: true, ranFar: true });
+  });
+
+  it("tags a confirmed flip LOW when counter-trend AND tight (barely ran)", () => {
+    const r120: SrLevel[] = [{ price: 120, touches: 6, firstIndex: 0, lastIndex: 0 }];
+    const bars: LevelCandle[] = [
+      candle(90, 80, 85, 0),    // session starts low (open proxy 85)
+      candle(135, 100, 130, 1), // rallied well above 120
+      candle(128, 103, 104, 2), // break DOWN of 120 (only ~17pt past = tight)
+      candle(115, 106, 107, 3), // retest confirms short; close 107 > open 85 => counter-trend
+    ];
+    const result = evaluateSrFlipSignal({ underlying: "NIFTY", levels: r120, sessionBars: bars, referencePrice: 107, vix: 11 });
+
+    expect(result.state).toBe("CONFIRMED");
+    expect(result.direction).toBe("SHORT");
+    expect(result.conviction).toBe("LOW");
+    expect(result.convictionFactors).toMatchObject({ aligned: false, ranFar: false });
+  });
+
 });
 
 describe("sr-flip helpers", () => {
