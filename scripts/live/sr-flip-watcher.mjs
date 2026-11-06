@@ -25,6 +25,8 @@ const POLL_MS = 20_000, HEARTBEAT_MS = 600_000;
 const VOL_MIN = 1.0;            // high-conviction volume ratio (real futures vol vs trailing avg)
 const WHIPSAW_MS = 30 * 60_000; // opposite-direction alert within 30 min = whipsaw
 const SEND_TELEGRAM = process.env.SEND_TELEGRAM !== "0"; // default ON; SEND_TELEGRAM=0 => journal-only (dry run)
+const HIGH_ONLY = process.env.HIGH_ONLY !== "0"; // default ON: only push engine-HIGH-conviction confirmed retests (~1-2/day, ~88% bt). HIGH_ONLY=0 => all convictions
+const ARM_ALERTS = process.env.ARM_ALERTS === "1"; // default OFF: ARMs stay journal-only (no Telegram noise). ARM_ALERTS=1 => push arm-your-limit precursors
 
 function loadState(){ try { return JSON.parse(fs.readFileSync(STATE,"utf8")); } catch { return { attempts:{}, lastConfirmedKey:null, lastPush:null, lastBeat:0 }; } }
 function saveState(s){ fs.writeFileSync(STATE, JSON.stringify(s)); }
@@ -110,7 +112,7 @@ async function handleSignal(p6, key, breakAndGo){
   const volOk = ratio != null && ratio >= VOL_MIN;
   const highConv = volOk && !whipsaw; // guard: a break-and-go must ALSO have volume (>=1.0x) to count HIGH/alert; a dead-volume pop stays journal-only
   const secondAttempt = !highConv && !whipsaw && attempt >= 2 && (volOk || !breakAndGo); // a dead-volume break-and-go never alerts (not even 2nd-attempt); clean-retest repeats still do        // low-conviction but repeated -> take 2nd attempt
-  const alert = highConv && !breakAndGo; // STRICT BAR: push only a clean confirmed retest (not break-and-go) with volume >=1.0x and no whipsaw; pushedKeys dedup below blocks repeats. 2nd-attempts stay journal-only.
+  const alert = highConv && !breakAndGo && (!HIGH_ONLY || p6.conviction === "HIGH"); // STRICT BAR + HIGH_ONLY: push only a clean confirmed retest with engine conviction HIGH (vol >=1.0x, no whipsaw). break-and-go & 2nd-attempts stay journal-only. HIGH_ONLY=0 reverts to all-conviction.
   const conviction = highConv ? "HIGH" : (secondAttempt ? "2ND-ATTEMPT" : "low");
   const sig = { date:DATE, time:ist(), dir:p6.direction, level:p6.plan.level, entry:p6.plan.entry, stop:p6.plan.stop, tgt:p6.plan.target, ref:p6.referencePrice, vol:ratio, rr:p6.plan.riskReward, attempt, conviction, engineConv:p6.conviction||null, breakAndGo, alert };
   try { fs.appendFileSync(SIGLOG, JSON.stringify(sig)+"\n"); } catch {}
@@ -135,7 +137,7 @@ async function handleArm(p6, key){
   const emoji = dir==="LONG"?"🟢":"🔴", side = dir==="LONG"?"BUY":"SELL";
   const opt = itmOption(dir, p6.referencePrice!=null?p6.referencePrice:L);
   const text = `📍 ${emoji} ${L} BROKE ${dir==="LONG"?"UP":"DOWN"} — ARM YOUR LIMIT\nPlace a ${side} limit at ${L} (stop ${stop}).\nWAIT for the retest — do NOT chase. If price runs >15 past ${L}, skip it.\nLikely: NIFTY ${opt} (ITM) · ${ist()} IST\n(paper setup — wait for the pullback)`;
-  const tg = SEND_TELEGRAM ? await sendTelegramText(text) : "telegram OFF";
+  const tg = (SEND_TELEGRAM && ARM_ALERTS) ? await sendTelegramText(text) : "telegram OFF (arm journal-only)";
   try { fs.appendFileSync(SIGLOG, JSON.stringify({date:DATE,time:ist(),stage:"ARM",dir,level:L,stop,ref:p6.referencePrice})+"\n"); } catch {}
   out.events.push(`[${ist()}] 📍 ARM LIMIT ${dir} @ ${L} (stop ${stop}). ref ${p6.referencePrice}. [${tg}]`);
 }
