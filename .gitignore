@@ -17,3 +17,8 @@ prisma/dev.db
 # Personal trading journal — binary + Excel lock files; kept local, not versioned
 Trading_Journal.xlsx
 ~$*.xlsx
+scripts/live/*.json
+scripts/live/*.jsonl
+
+# sr-flip watcher runtime state (per-day, machine-local)
+scripts/live/.runtime/
