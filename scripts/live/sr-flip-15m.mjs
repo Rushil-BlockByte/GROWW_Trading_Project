@@ -1,8 +1,10 @@
-// 15-minute S/R flip — PAPER-PARALLEL validator (no Telegram, journal/log only).
+// 15-minute S/R flip — LIVE signal runner (the main strategy from 2026-11-09).
 // Fetches today's NIFTY 5-min candles from Kite, aggregates to 15-min, builds 15-min
-// levels from the 5yr cache, and logs ONLY HIGH-conviction confirmed retests so we can
-// compare the 15-min HIGH-only edge (bt: ~1.3/day, ~88% win) against the live 5-min.
-// Usage: node scripts/live/sr-flip-15m-paper.mjs [YYYY-MM-DD]
+// levels from the 5yr cache, and sends ONLY HIGH-conviction confirmed retests to the
+// Telegram group (bt: ~1.3-1.7/day, ~89% win, stable across 1yr and 5yr). Per-level
+// dedup = one trade per level per day. Self-contained: needs only the Kite token in
+// .env + the 5yr cache; does NOT need the app/stream running.
+// Usage: node scripts/live/sr-flip-15m.mjs [YYYY-MM-DD]   (SEND_TELEGRAM=0 => dry-run, log only)
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +19,7 @@ const RUNTIME = path.join(HERE, ".runtime"); fs.mkdirSync(RUNTIME, { recursive: 
 const LOG = path.join(RUNTIME, "paper15m_" + DATE + ".jsonl");
 const STATE = path.join(RUNTIME, "paper15m_state_" + DATE + ".json");
 const POLL_MS = 60_000;
+const SEND_TELEGRAM = process.env.SEND_TELEGRAM !== "0"; // default ON; SEND_TELEGRAM=0 => journal/log only (dry-run)
 const EXT_RAN_FAR = 34;
 const FLIP = { breakBuffer: 15, retestBars: 9, touchBuffer: 12, target: 40, stop: 25, retestCloseMargin: 5 };
 
@@ -68,6 +71,10 @@ function detectEvents(bars, level, P) {
   return ev;
 }
 function itmOption(dir, ref) { return dir === "LONG" ? `${Math.round((ref - 125) / 50) * 50} CE` : `${Math.round((ref + 125) / 50) * 50} PE`; }
+async function sendTelegram(text) {
+  if (!SEND_TELEGRAM) return "telegram OFF (dry-run)";
+  try { const r = await fetch("https://api.telegram.org/bot" + env.TELEGRAM_BOT_TOKEN + "/sendMessage", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chat_id: env.TELEGRAM_CHAT_ID, text }) }); return (await r.json()).ok ? "telegram sent" : "telegram FAILED"; } catch { return "telegram error"; }
+}
 const loadState = () => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return { seen: {} }; } };
 const saveState = s => fs.writeFileSync(STATE, JSON.stringify(s));
 
@@ -106,7 +113,12 @@ async function tick() {
       st.seen[key] = e.tier;
       const rec = { date: DATE, ...e, opt: itmOption(e.dir, e.level), loggedAt: new Date().toISOString() };
       fs.appendFileSync(LOG, JSON.stringify(rec) + "\n");
-      if (e.tier === "HIGH") { highs++; console.log(`[15m HIGH] ${e.dir} @ ${e.level} (retest ${e.retestTime}) entry ${e.entry} stop ${e.stop} tgt ${e.target} | ${rec.opt} | ext ${e.ext} aligned ${e.aligned}`); }
+      if (e.tier === "HIGH") { highs++;
+        const emoji = e.dir === "LONG" ? "🟢" : "🔴";
+        const msg = `${emoji} 15-MIN FLIP — ${e.dir} @ ${e.level} (HIGH)\nBuy NIFTY ${rec.opt} (ITM)\nentry ${e.entry} · stop ${e.stop} · target ${e.target}\nRetest held ${e.retestTime.slice(11, 16)} IST. Take it AT the level — don't chase. One trade per level.`;
+        const tg = await sendTelegram(msg);
+        console.log(`[15m HIGH] ${e.dir} @ ${e.level} (retest ${e.retestTime}) entry ${e.entry} stop ${e.stop} tgt ${e.target} | ${rec.opt} | [${tg}]`);
+      }
     }
   }
   saveState(st);
@@ -114,7 +126,7 @@ async function tick() {
   return `15m bars ${bars15.length} | levels ${levels.length} | events ${found} | new HIGH ${highs} | last5m ${last}`;
 }
 
-console.log(`15m paper runner | ${DATE} | ${ALL_LEVELS.length} total 15m levels | open ${OPEN ?? "?"}`);
+console.log(`15m LIVE runner | ${DATE} | ${ALL_LEVELS.length} total 15m levels | open ${OPEN ?? "?"}`);
 let stop = false;
 for (let i = 0; i < 450 && !stop; i++) {
   try { const msg = await tick(); console.log(`[${new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" })} IST] ${msg}`); }
