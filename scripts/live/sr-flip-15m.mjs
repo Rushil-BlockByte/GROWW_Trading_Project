@@ -20,7 +20,7 @@ const LOG = path.join(RUNTIME, "paper15m_" + DATE + ".jsonl");
 const FEED = path.join(RUNTIME, "feed_" + DATE + ".jsonl"); // the actual SENT alerts (gated) — the dashboard mirrors this exactly
 const STATE = path.join(RUNTIME, "paper15m_state_" + DATE + ".json");
 const POLL_MS = 60_000;
-const COOLDOWN_MS = 30 * 60_000; // one NEW trade per 30 min: kills same-dir cascades + opposite-dir whipsaws; the confirm of an already-armed level still passes
+const COOLDOWN_MS = 21 * 60_000; // one NEW trade per 30 min: kills same-dir cascades + opposite-dir whipsaws; the confirm of an already-armed level still passes
 const SEND_TELEGRAM = process.env.SEND_TELEGRAM !== "0"; // default ON; SEND_TELEGRAM=0 => journal/log only (dry-run)
 const EXT_RAN_FAR = 34;
 const FLIP = { breakBuffer: 15, retestBars: 9, touchBuffer: 12, target: 40, stop: 25, retestCloseMargin: 5 };
