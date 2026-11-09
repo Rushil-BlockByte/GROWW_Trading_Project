@@ -94,12 +94,10 @@ async function sendTelegram(text) {
 const loadState = () => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return { seen: {} }; } };
 const saveState = s => fs.writeFileSync(STATE, JSON.stringify(s));
 const appendFeed = r => { try { fs.appendFileSync(FEED, JSON.stringify(r) + "\n"); } catch {} }; // record a SENT alert for the site to read
-// TWO-TRACK gate: only a real CONFIRM holds the one-trade slot — an ARM (prep)
-// never blocks a trade. gateConfirm = one confirmed trade per COOLDOWN_MS (the
-// arm->confirm of the SAME level passes; a different level/direction within the
-// window is held = whipsaw + cascade protection on TRADES). gateArm = one ARM per
-// direction per COOLDOWN_MS (kills cascade prep-spam) but never touches the slot.
-function gateConfirm(st, dir, level) {
+// One-trade-per-direction gate (whipsaw + same-direction cascade). Returns true if
+// this (dir,level) alert may be SENT. The arm->confirm of the SAME level always
+// passes; any OTHER level/direction within COOLDOWN_MS of the active trade is held.
+function gate(st, dir, level) {
   const now = Date.now();
   const a = st.activeTrade;
   if (a && now - a.ms < COOLDOWN_MS) {
@@ -107,13 +105,6 @@ function gateConfirm(st, dir, level) {
     return false;
   }
   st.activeTrade = { dir, level, ms: now };
-  return true;
-}
-function gateArm(st, dir) {
-  const now = Date.now();
-  st.lastArm = st.lastArm || {};
-  if (st.lastArm[dir] && now - st.lastArm[dir] < COOLDOWN_MS) return false;
-  st.lastArm[dir] = now;
   return true;
 }
 
@@ -159,7 +150,7 @@ async function tick() {
       if (e.tier === "HIGH") { highs++;
         const emoji = e.dir === "LONG" ? "🟢" : "🔴";
         const msg = `${emoji} 15-MIN FLIP — ${e.dir} @ ${e.level} (HIGH)\nBuy NIFTY ${rec.opt} (ITM)\nentry ${e.entry} · stop ${e.stop} · target ${e.target}\nRetest held ${e.retestTime.slice(11, 16)} IST. Take it AT the level — don't chase. One trade per level.`;
-        const allowed = gateConfirm(st, e.dir, e.level);
+        const allowed = gate(st, e.dir, e.level);
         const tg = allowed ? await sendTelegram(msg) : "suppressed (cooldown — already in a trade this direction)";
         if (allowed) appendFeed({ time: e.retestTime, stage: "CONFIRM", dir: e.dir, level: e.level, entry: e.entry, stop: e.stop, target: e.target, opt: rec.opt });
         console.log(`[15m HIGH] ${e.dir} @ ${e.level} (retest ${e.retestTime}) entry ${e.entry} stop ${e.stop} tgt ${e.target} | ${rec.opt} | [${tg}]`);
@@ -181,7 +172,7 @@ Place a ${side} limit at ${br.level} (stop ${br.stop}).
 WAIT for the retest. Skip if price runs >15 past ${br.level} without coming back.
 Likely: NIFTY ${opt} (ITM) · ${br.breakTime.slice(11, 16)} IST
 (prep alert — the HIGH confirm follows if the retest holds)`;
-    const allowed = gateArm(st, br.dir);
+    const allowed = gate(st, br.dir, br.level);
     const tg = allowed ? await sendTelegram(msg) : "suppressed (cooldown — already in a trade this direction)";
     if (allowed) appendFeed({ time: br.breakTime, stage: "ARM", dir: br.dir, level: br.level, entry: br.level, stop: br.stop, target: null, opt });
     fs.appendFileSync(LOG, JSON.stringify({ date: DATE, stage: "ARM", dir: br.dir, level: br.level, stop: br.stop, opt, breakTime: br.breakTime, loggedAt: new Date().toISOString() }) + "\n");
