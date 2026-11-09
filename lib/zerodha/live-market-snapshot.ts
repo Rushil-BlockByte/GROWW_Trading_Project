@@ -6,7 +6,7 @@ import type { MarketStateStore } from "@/lib/market/market-state";
 import { addMinutes } from "@/lib/market/session";
 import type { MarketDataProviderStatus } from "@/lib/providers/market-data-provider";
 import { buildOptionChainContext } from "@/lib/options/chain-context";
-import { evaluateSrFlipSignal } from "@/lib/strategy/sr-flip";
+import { evaluateSrFlipSignal, DEFAULT_SR_FLIP_PARAMS } from "@/lib/strategy/sr-flip";
 import { srFlipSignalSummary } from "@/lib/strategy/sr-flip-signal";
 import { detectLevelAlert } from "@/lib/strategy/level-alerts";
 import type { LevelCandle, SrLevel, SrLevelSource, SrFlipEvaluation } from "@/types/sr-flip";
@@ -24,6 +24,11 @@ import type {
 } from "@/types/simulation";
 
 const LIVE_SELECTED_UNDERLYING: UnderlyingSymbol = "NIFTY";
+
+// 15-minute flip: same price params, retest/hold windows scaled for 15-min bars
+// (9 bars ~= 2.25h, matching the 26-bar window on 5-min). The dashboard now runs
+// the SAME 15-min flip as the sr-flip-15m runner that drives Telegram.
+const FIFTEEN_MIN_FLIP_PARAMS = { ...DEFAULT_SR_FLIP_PARAMS, retestBars: 9, holdBars: 9 };
 
 export type LiveIndicatorPreviousDay = {
   high: Decimal.Value;
@@ -177,12 +182,14 @@ export function buildLiveMarketSnapshot({
     });
   const srReferencePrice =
     numberFromDecimal(niftyState.state.latestTick.lastPrice) ?? 0;
-  const srSessionBars = fiveMinuteBars(
-    liveOneMinuteMarketCandles({
-      candleBuilder,
-      instrumentToken: niftyState.instrument.instrumentToken,
-      sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
-    }),
+  const srSessionBars = fifteenMinuteBars(
+    fiveMinuteBars(
+      liveOneMinuteMarketCandles({
+        candleBuilder,
+        instrumentToken: niftyState.instrument.instrumentToken,
+        sessionCandles: sessionCandlesByToken?.get(niftyState.instrument.instrumentToken) ?? [],
+      }),
+    ),
   );
   const srLevels = srLevelsByUnderlying?.[LIVE_SELECTED_UNDERLYING] ?? [];
   // Soft volume cue: the latest closed 5-min FUTURES volume vs its recent
@@ -198,6 +205,7 @@ export function buildLiveMarketSnapshot({
       referencePrice: srReferencePrice,
       vix: indiaVix ?? null,
       volumeRatio,
+      params: FIFTEEN_MIN_FLIP_PARAMS,
     }),
     levelSource: srLevelSource,
   };
@@ -579,6 +587,24 @@ function fiveMinuteBars(oneMinute: MarketCandleData[]): LevelCandle[] {
     });
   }
 
+  return bars;
+}
+
+/**
+ * Aggregate CLOSED 5-minute bars into CLOSED 15-minute bars (groups of three),
+ * so the flip runs on the same 15-minute candles as the standalone runner.
+ */
+function fifteenMinuteBars(fiveMin: LevelCandle[]): LevelCandle[] {
+  const bars: LevelCandle[] = [];
+  for (let index = 0; index + 3 <= fiveMin.length; index += 3) {
+    const group = fiveMin.slice(index, index + 3);
+    bars.push({
+      startTime: group[0].startTime,
+      high: Math.max(...group.map((candle) => candle.high)),
+      low: Math.min(...group.map((candle) => candle.low)),
+      close: group[group.length - 1].close,
+    });
+  }
   return bars;
 }
 

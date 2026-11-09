@@ -44,6 +44,28 @@ const INDIA_VIX_TOKEN = 264969;
 // minTouches raised for the 5-year window: strong levels there carry 50-100
 // touches, so a low floor would only admit noise far from price.
 const SR_LEVEL_PARAMS = { pivot: 3, clusterPoints: 20, minTouches: 12 };
+// 15-minute levels: the dashboard flip runs on 15-min, so levels are built from
+// the 5yr history aggregated to 15-min (groups of 3 per day), minTouches 6 --
+// identical to the sr-flip-15m runner that drives Telegram.
+const FIFTEEN_LEVEL_PARAMS = { pivot: 3, clusterPoints: 20, minTouches: 6 };
+function aggregateToFifteen(bars: LevelCandle[]): LevelCandle[] {
+  const byDay = new Map<string, LevelCandle[]>();
+  for (const bar of bars) {
+    const day = bar.startTime.slice(0, 10);
+    const list = byDay.get(day) ?? [];
+    list.push(bar);
+    byDay.set(day, list);
+  }
+  const out: LevelCandle[] = [];
+  for (const day of [...byDay.keys()].sort()) {
+    const dayBars = byDay.get(day)!.slice().sort((a, b) => (a.startTime < b.startTime ? -1 : 1));
+    for (let i = 0; i < dayBars.length; i += 3) {
+      const g = dayBars.slice(i, i + 3);
+      out.push({ startTime: g[0].startTime, high: Math.max(...g.map((x) => x.high)), low: Math.min(...g.map((x) => x.low)), close: g[g.length - 1].close });
+    }
+  }
+  return out;
+}
 
 export type LiveKiteStreamSnapshot = {
   configured: {
@@ -309,8 +331,9 @@ export class LiveKiteStreamService {
 
     for (const underlying of DEFAULT_UNDERLYINGS) {
       const bars = cache.barsByUnderlying[underlying.symbol] ?? [];
-      this.srLevelsByUnderlying[underlying.symbol] = bars.length
-        ? buildLevels(bars, SR_LEVEL_PARAMS)
+      const bars15 = aggregateToFifteen(bars);
+      this.srLevelsByUnderlying[underlying.symbol] = bars15.length
+        ? buildLevels(bars15, FIFTEEN_LEVEL_PARAMS)
         : [];
     }
 
