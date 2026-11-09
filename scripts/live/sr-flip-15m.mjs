@@ -149,7 +149,9 @@ async function tick() {
       fs.appendFileSync(LOG, JSON.stringify(rec) + "\n");
       if (e.tier === "HIGH") { highs++;
         const emoji = e.dir === "LONG" ? "🟢" : "🔴";
-        const msg = `${emoji} 15-MIN FLIP — ${e.dir} @ ${e.level} (HIGH)\nBuy NIFTY ${rec.opt} (ITM)\nentry ${e.entry} · stop ${e.stop} · target ${e.target}\nRetest held ${e.retestTime.slice(11, 16)} IST. Take it AT the level — don't chase. One trade per level.`;
+        const msg = `✓ ${e.level} RETEST HELD (${e.tier}) — target ${e.target}
+If your limit filled, you're in — manage to target ${e.target} / stop ${e.stop}.
+(confirmation of the ${e.dir} setup, NOT a new entry — don't chase here)`;
         const allowed = gate(st, e.dir, e.level);
         const tg = allowed ? await sendTelegram(msg) : "suppressed (cooldown — already in a trade this direction)";
         if (allowed) appendFeed({ time: e.retestTime, stage: "CONFIRM", dir: e.dir, level: e.level, entry: e.entry, stop: e.stop, target: e.target, opt: rec.opt });
@@ -167,11 +169,11 @@ async function tick() {
     st.seen[akey] = br.breakTime;
     const emoji = br.dir === "LONG" ? "🟢" : "🔴", side = br.dir === "LONG" ? "BUY" : "SELL", arrow = br.dir === "LONG" ? "UP" : "DOWN";
     const opt = itmOption(br.dir, br.level);
-    const msg = `📍 ${emoji} 15-MIN ARM — ${br.level} BROKE ${arrow}
-Place a ${side} limit at ${br.level} (stop ${br.stop}).
-WAIT for the retest. Skip if price runs >15 past ${br.level} without coming back.
-Likely: NIFTY ${opt} (ITM) · ${br.breakTime.slice(11, 16)} IST
-(prep alert — the HIGH confirm follows if the retest holds)`;
+    const msg = `🎯 ${emoji} TRADE SIGNAL — ${br.dir} ${br.level}
+Place a ${side} LIMIT at ${br.level} · stop ${br.stop}
+Option: NIFTY ${opt} (ITM)
+Fills on the retest — THIS is your entry. Skip if it runs >15 past ${br.level}.
+${br.breakTime.slice(11, 16)} IST`;
     const allowed = gate(st, br.dir, br.level);
     const tg = allowed ? await sendTelegram(msg) : "suppressed (cooldown — already in a trade this direction)";
     if (allowed) appendFeed({ time: br.breakTime, stage: "ARM", dir: br.dir, level: br.level, entry: br.level, stop: br.stop, target: null, opt });
