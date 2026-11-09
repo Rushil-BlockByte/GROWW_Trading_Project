@@ -70,6 +70,20 @@ function detectEvents(bars, level, P) {
   }
   return ev;
 }
+// Fresh break on the LATEST closed 15m bar -> ARM (place a limit at the level
+// BEFORE the retest; the confirmed signal lags on 15-min). Trend-aligned only
+// (the breaks that can become HIGH). Returns {dir,level,stop,breakTime} or null.
+function detectBreak(bars15, level, open, P) {
+  const n = bars15.length; if (n < 2) return null;
+  const prev = bars15[n - 2], cur = bars15[n - 1];
+  const bu = prev.close <= level && cur.close >= level + P.breakBuffer;
+  const bd = prev.close >= level && cur.close <= level - P.breakBuffer;
+  if (!bu && !bd) return null;
+  const dir = bu ? "LONG" : "SHORT";
+  const aligned = dir === "LONG" ? cur.close > open : cur.close < open;
+  if (!aligned) return null;
+  return { dir, level, stop: dir === "LONG" ? level - P.stop : level + P.stop, breakTime: cur.t };
+}
 function itmOption(dir, ref) { return dir === "LONG" ? `${Math.round((ref - 125) / 50) * 50} CE` : `${Math.round((ref + 125) / 50) * 50} PE`; }
 async function sendTelegram(text) {
   if (!SEND_TELEGRAM) return "telegram OFF (dry-run)";
@@ -120,6 +134,25 @@ async function tick() {
         console.log(`[15m HIGH] ${e.dir} @ ${e.level} (retest ${e.retestTime}) entry ${e.entry} stop ${e.stop} tgt ${e.target} | ${rec.opt} | [${tg}]`);
       }
     }
+  }
+  // BREAK-STAGE ARM: the moment a level breaks on the latest closed 15m bar,
+  // ping to place a limit AT the level before the retest (one per level/day).
+  for (const L of levels) {
+    const br = detectBreak(bars15, L.price, OPEN, FLIP);
+    if (!br) continue;
+    const akey = `ARM:${br.dir}:${br.level}`;
+    if (st.seen[akey]) continue;
+    st.seen[akey] = br.breakTime;
+    const emoji = br.dir === "LONG" ? "🟢" : "🔴", side = br.dir === "LONG" ? "BUY" : "SELL", arrow = br.dir === "LONG" ? "UP" : "DOWN";
+    const opt = itmOption(br.dir, br.level);
+    const msg = `📍 ${emoji} 15-MIN ARM — ${br.level} BROKE ${arrow}
+Place a ${side} limit at ${br.level} (stop ${br.stop}).
+WAIT for the retest. Skip if price runs >15 past ${br.level} without coming back.
+Likely: NIFTY ${opt} (ITM) · ${br.breakTime.slice(11, 16)} IST
+(prep alert — the HIGH confirm follows if the retest holds)`;
+    const tg = await sendTelegram(msg);
+    fs.appendFileSync(LOG, JSON.stringify({ date: DATE, stage: "ARM", dir: br.dir, level: br.level, stop: br.stop, opt, breakTime: br.breakTime, loggedAt: new Date().toISOString() }) + "\n");
+    console.log(`[15m ARM] ${br.dir} @ ${br.level} broke (${br.breakTime.slice(11, 16)}) -> arm ${side} limit | ${opt} | [${tg}]`);
   }
   saveState(st);
   const last = five[five.length - 1].t;
