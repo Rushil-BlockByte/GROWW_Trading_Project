@@ -19,6 +19,7 @@ const RUNTIME = path.join(HERE, ".runtime"); fs.mkdirSync(RUNTIME, { recursive: 
 const LOG = path.join(RUNTIME, "paper15m_" + DATE + ".jsonl");
 const STATE = path.join(RUNTIME, "paper15m_state_" + DATE + ".json");
 const POLL_MS = 60_000;
+const COOLDOWN_MS = 30 * 60_000; // one NEW trade per 30 min: kills same-dir cascades + opposite-dir whipsaws; the confirm of an already-armed level still passes
 const SEND_TELEGRAM = process.env.SEND_TELEGRAM !== "0"; // default ON; SEND_TELEGRAM=0 => journal/log only (dry-run)
 const EXT_RAN_FAR = 34;
 const FLIP = { breakBuffer: 15, retestBars: 9, touchBuffer: 12, target: 40, stop: 25, retestCloseMargin: 5 };
@@ -91,11 +92,28 @@ async function sendTelegram(text) {
 }
 const loadState = () => { try { return JSON.parse(fs.readFileSync(STATE, "utf8")); } catch { return { seen: {} }; } };
 const saveState = s => fs.writeFileSync(STATE, JSON.stringify(s));
+// One-trade-per-direction gate (whipsaw + same-direction cascade). Returns true if
+// this (dir,level) alert may be SENT. The arm->confirm of the SAME level always
+// passes; any OTHER level/direction within COOLDOWN_MS of the active trade is held.
+function gate(st, dir, level) {
+  const now = Date.now();
+  const a = st.activeTrade;
+  if (a && now - a.ms < COOLDOWN_MS) {
+    if (a.dir === dir && a.level === level) { a.ms = now; return true; }
+    return false;
+  }
+  st.activeTrade = { dir, level, ms: now };
+  return true;
+}
 
 async function fetch5min() {
   const r = await fetch(`https://api.kite.trade/instruments/historical/${NIFTY}/5minute?from=${DATE}+09:15:00&to=${DATE}+15:30:00`, { headers: AUTH }).then(x => x.json());
   if (r.status !== "success") throw new Error(JSON.stringify(r).slice(0, 160));
-  return r.data.candles.map(c => ({ t: c[0], high: c[2], low: c[3], close: c[4] })); // [time,o,h,l,c,v]
+  const nowMs = Date.now();
+  // CLOSED-CANDLE ONLY: drop any 5-min candle still forming (its close time is in
+  // the future) so a 15-min bar is detected only after all three 5-min subs close.
+  return r.data.candles.map(c => ({ t: c[0], high: c[2], low: c[3], close: c[4] }))
+    .filter(c => new Date(c.t).getTime() + 5 * 60_000 <= nowMs); // [time,o,h,l,c,v]
 }
 
 // ---- build 15-min levels once from the cache, around today's open ----
@@ -130,7 +148,7 @@ async function tick() {
       if (e.tier === "HIGH") { highs++;
         const emoji = e.dir === "LONG" ? "🟢" : "🔴";
         const msg = `${emoji} 15-MIN FLIP — ${e.dir} @ ${e.level} (HIGH)\nBuy NIFTY ${rec.opt} (ITM)\nentry ${e.entry} · stop ${e.stop} · target ${e.target}\nRetest held ${e.retestTime.slice(11, 16)} IST. Take it AT the level — don't chase. One trade per level.`;
-        const tg = await sendTelegram(msg);
+        const tg = gate(st, e.dir, e.level) ? await sendTelegram(msg) : "suppressed (cooldown — already in a trade this direction)";
         console.log(`[15m HIGH] ${e.dir} @ ${e.level} (retest ${e.retestTime}) entry ${e.entry} stop ${e.stop} tgt ${e.target} | ${rec.opt} | [${tg}]`);
       }
     }
@@ -150,7 +168,7 @@ Place a ${side} limit at ${br.level} (stop ${br.stop}).
 WAIT for the retest. Skip if price runs >15 past ${br.level} without coming back.
 Likely: NIFTY ${opt} (ITM) · ${br.breakTime.slice(11, 16)} IST
 (prep alert — the HIGH confirm follows if the retest holds)`;
-    const tg = await sendTelegram(msg);
+    const tg = gate(st, br.dir, br.level) ? await sendTelegram(msg) : "suppressed (cooldown — already in a trade this direction)";
     fs.appendFileSync(LOG, JSON.stringify({ date: DATE, stage: "ARM", dir: br.dir, level: br.level, stop: br.stop, opt, breakTime: br.breakTime, loggedAt: new Date().toISOString() }) + "\n");
     console.log(`[15m ARM] ${br.dir} @ ${br.level} broke (${br.breakTime.slice(11, 16)}) -> arm ${side} limit | ${opt} | [${tg}]`);
   }
