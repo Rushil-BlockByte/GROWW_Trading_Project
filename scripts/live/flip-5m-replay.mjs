@@ -24,7 +24,14 @@ const candles = j.data.candles.map(c => ({ t: c[0], open: c[1], high: c[2], low:
 
 console.log(`${DATE} | open ${open} | ${lock ? "LOCKED list" : "15-min list built from the open"}: ${levels.map(L => L.price).join(", ")}`);
 let net = 0, w = 0, l = 0;
-for (const s of scanFlips(candles, levels, open)) {
+const breaks = [];
+const sigs = scanFlips(candles, levels, open, undefined, breaks);
+const traded = new Set();
+const brkLine = b => `  ${closeHM(b.t)}  BREAK ${b.dir === "LONG" ? "UP  " : "DOWN"} ${b.broken.join(",")} -> watch flip ${b.flip} (close ${b.close})`;
+let bi = 0;
+for (const s of sigs) {
+  while (bi < breaks.length && breaks[bi].i <= s.i) { const b = breaks[bi++]; if (!traded.has(b.dir + ":" + b.flip)) console.log(brkLine(b)); }
+  traded.add(s.dir + ":" + s.level);
   let res = "no exit by close", pts = 0, at = "";
   for (let k = s.i + 1; k < candles.length; k++) { const b = candles[k];
     const hitStop = s.dir === "LONG" ? b.low <= s.stop : b.high >= s.stop;
@@ -32,6 +39,7 @@ for (const s of scanFlips(candles, levels, open)) {
     if (hitStop) { res = "STOP"; pts = -25; at = closeHM(b.t); l++; break; }
     if (hitTgt) { res = "TARGET"; pts = 40; at = closeHM(b.t); w++; break; } }
   net += pts;
-  console.log(`  ${closeHM(s.t)}  ${s.dir.padEnd(5)} ${s.level} | ${s.dir === "LONG" ? "low " + s.low : "high " + s.high} close ${s.close} | stop ${s.stop} tgt ${s.target} -> ${res}${at ? " @" + at : ""}${pts ? ` (${pts > 0 ? "+" : ""}${pts} from the level)` : ""}`);
+  console.log(`  ${closeHM(s.t)}  TRADE ${s.dir.padEnd(5)} ${s.level} | ${s.dir === "LONG" ? "low " + s.low : "high " + s.high} close ${s.close} | stop ${s.stop} tgt ${s.target} -> ${res}${at ? " @" + at : ""}${pts ? ` (${pts > 0 ? "+" : ""}${pts} from the level)` : ""}`);
 }
+for (; bi < breaks.length; bi++) if (!traded.has(breaks[bi].dir + ":" + breaks[bi].flip)) console.log(brkLine(breaks[bi]));
 console.log(`  ${w} target, ${l} stop | net ${net >= 0 ? "+" : ""}${net} pts if each was filled at the level (stop checked before target in the same candle)`);

@@ -2,6 +2,8 @@
 // Levels: the day's LOCKED list (today_levels.json = 15-min levels, 5 R + 5 S within
 // ±250 of the open, made by morning.mjs). Checks every closed 5-min candle; when a
 // broken level is retested and bounces, sends ONE signal for that level+direction.
+// Also sends a "LEVEL BROKEN" alert when a candle closes through levels (naming the
+// farthest one as the flip to watch) — that one says WAIT, not trade.
 // Run INSTEAD of sr-flip-15m.mjs (running both = two different sets of alerts).
 // Usage: node scripts/live/flip-5m.mjs [YYYY-MM-DD]     SEND_TELEGRAM=0 => dry-run
 import fs from "node:fs";
@@ -50,24 +52,44 @@ for (let stop = false; !stop;) {
       if (last.t !== lastSeen) {
         lastSeen = last.t;
         const st = loadState();
-        for (const s of scanFlips(candles, LOCK.levels, LOCK.open)) {
-          const key = `${s.dir}:${s.level}`;
-          if (st.done[key]) continue;
-          const ageMin = (Date.now() - (new Date(s.t).getTime() + 5 * 60_000)) / 60_000;
-          const opt = itm(s.dir, s.level), side = s.dir === "LONG" ? "🟢" : "🔴";
-          const touch = s.dir === "LONG" ? `low ${s.low}` : `high ${s.high}`;
-          const msg = `${side} FLIP RETEST — ${s.dir} ${s.level}
-${closeHM(s.t)} 5-min candle retested ${s.level} (${touch}) and closed ${s.close}
-Level ${s.level} · stop ${s.stop} · target ${s.target}
+        const breaks = [];
+        const trades = scanFlips(candles, LOCK.levels, LOCK.open, undefined, breaks);
+        const events = [...breaks.map(e => ({ ...e, kind: "BREAK" })), ...trades.map(e => ({ ...e, kind: "TRADE" }))]
+          .sort((x, y) => x.i - y.i || (x.kind === "BREAK" ? -1 : 1));
+        for (const e of events) {
+          const ageMin = (Date.now() - (new Date(e.t).getTime() + 5 * 60_000)) / 60_000;
+          const side = e.dir === "LONG" ? "🟢" : "🔴";
+          let key, msg, line, rec;
+          if (e.kind === "BREAK") {
+            // "level broken" — the farthest level broken on this candle is the flip to watch
+            key = `BRK:${e.dir}:${e.flip}:${e.t}`;
+            if (st.done[key] || st.done[`${e.dir}:${e.flip}`]) continue; // already alerted, or this level already traded
+            const way = e.dir === "LONG" ? "UP" : "DOWN";
+            const others = e.broken.filter(p => p !== e.flip);
+            msg = `⚠️ LEVEL BROKEN ${way} — ${e.flip}
+${closeHM(e.t)} 5-min candle closed ${e.close}${others.length ? `
+Also broke: ${others.join(", ")} → watching the farthest, ${e.flip}` : ""}
+Flip level = ${e.flip}. Wait for the retest — NO trade yet.`;
+            line = `[BREAK ${closeHM(e.t)}] ${way} ${e.broken.join(",")} -> flip ${e.flip} | close ${e.close}`;
+            rec = { kind: "BREAK", time: e.t, closeAt: closeHM(e.t), dir: e.dir, flip: e.flip, broken: e.broken, close: e.close };
+          } else {
+            key = `${e.dir}:${e.level}`;
+            if (st.done[key]) continue;
+            const opt = itm(e.dir, e.level);
+            const touch = e.dir === "LONG" ? `low ${e.low}` : `high ${e.high}`;
+            msg = `${side} RETEST WORKED at ${e.level} — take the ${e.dir} trade
+${closeHM(e.t)} 5-min candle came back to ${e.level} (${touch}) and closed ${e.close}
+Entry ${e.level} · stop ${e.stop} · target ${e.target}
 Option: NIFTY ${opt} (ITM)
-Price is ${Math.abs(Math.round(s.close - s.level))} pts from the level now — don't chase a big run.`;
-          let tg;
-          if (ageMin > STALE_MIN) tg = `NOT sent — candle closed ${Math.round(ageMin)} min ago`;
-          else tg = await sendTelegram(msg);
-          st.done[key] = { at: closeHM(s.t), tg };
+Price is ${Math.abs(Math.round(e.close - e.level))} pts from the level now.`;
+            line = `[TRADE ${closeHM(e.t)}] ${e.dir} ${e.level} | ${touch} close ${e.close} | stop ${e.stop} tgt ${e.target} | ${opt}`;
+            rec = { kind: "TRADE", time: e.t, closeAt: closeHM(e.t), dir: e.dir, level: e.level, stop: e.stop, target: e.target, close: e.close, opt };
+          }
+          const tg = ageMin > STALE_MIN ? `NOT sent — candle closed ${Math.round(ageMin)} min ago` : await sendTelegram(msg);
+          st.done[key] = { at: closeHM(e.t), tg };
           fs.writeFileSync(STATE, JSON.stringify(st));
-          fs.appendFileSync(FEED, JSON.stringify({ time: s.t, closeAt: closeHM(s.t), dir: s.dir, level: s.level, stop: s.stop, target: s.target, close: s.close, opt, tg }) + "\n");
-          console.log(`[FLIP ${closeHM(s.t)}] ${s.dir} ${s.level} | ${touch} close ${s.close} | stop ${s.stop} tgt ${s.target} | ${opt} | [${tg}]`);
+          fs.appendFileSync(FEED, JSON.stringify({ ...rec, tg }) + "\n");
+          console.log(`${line} | [${tg}]`);
         }
         console.log(`[${new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" })} IST] candles ${candles.length} | last closed ${closeHM(last.t)} @ ${last.close}`);
       }
