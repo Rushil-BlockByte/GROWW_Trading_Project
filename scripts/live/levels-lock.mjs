@@ -3,7 +3,7 @@
 // morning.mjs (what you're shown), sr-flip-15m.mjs (what fires Telegram) and
 // /feed15 (the dashboard). Nothing rebuilds it during the day. A new list is
 // only made when asked: `node scripts/morning.mjs - <open> --new`.
-// Level algorithm = the morning one (5-min swings, pivot3 / cluster20 / minTouches6).
+// Level algorithm = 15-min swings (5yr cache aggregated to 15-min, pivot3 / cluster20 / minTouches6).
 import fs from "node:fs";
 import path from "node:path";
 
@@ -26,12 +26,23 @@ function to15(fiveMin) { const out = [];
     out.push({ t: g[0].t, high: Math.max(...g.map(x => x.high)), low: Math.min(...g.map(x => x.low)), close: g[g.length - 1].close }); }
   return out; }
 
-// MORNING levels = the list you are given each morning: 5-min swings over the whole
-// 5yr cache (pivot3 / cluster20 / minTouches6), same as morning.mjs always printed.
+// 15-MIN levels: 5yr cache aggregated to 15-min candles per day, then swings
+// (pivot3 / cluster20 / minTouches6).
 export function buildAllLevels(proj) {
   const cache = JSON.parse(fs.readFileSync(path.join(proj, "data/sr-5min-cache.json"), "utf8"));
-  const bars = cache.barsByUnderlying.NIFTY.map(b => ({ high: b.high, low: b.low, close: b.close }));
-  return buildLevels(bars);
+  const byDay = new Map();
+  for (const b of cache.barsByUnderlying.NIFTY) { const d = b.startTime.slice(0, 10); if (!byDay.has(d)) byDay.set(d, []); byDay.get(d).push({ t: b.startTime, high: b.high, low: b.low, close: b.close }); }
+  const h15 = [];
+  for (const [, bars] of [...byDay.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1)) { bars.sort((a, b) => a.t < b.t ? -1 : 1); for (const b of to15(bars)) h15.push(b); }
+  return buildLevels(h15);
+}
+
+// the 5 nearest levels above and 5 nearest below the open, within ±250
+export function pickLevels(all, open) {
+  const near = all.filter(L => Math.abs(L.price - open) <= LOCK_SPAN);
+  const up = near.filter(L => L.price > open).sort((a, b) => a.price - b.price).slice(0, PER_SIDE);
+  const dn = near.filter(L => L.price <= open).sort((a, b) => b.price - a.price).slice(0, PER_SIDE);
+  return { up, dn, levels: [...up, ...dn].sort((a, b) => b.price - a.price) };
 }
 
 export const lockPath = proj => path.join(proj, "today_levels.json");
@@ -45,10 +56,7 @@ export function readLock(proj, date) {
 
 // build + write the day's list from the open. `extra` = prevClose/vix/etc for display.
 export function lockLevels(proj, date, open, extra = {}) {
-  const near = buildAllLevels(proj).filter(L => Math.abs(L.price - open) <= LOCK_SPAN);
-  const up = near.filter(L => L.price > open).sort((a, b) => a.price - b.price).slice(0, PER_SIDE);   // 5 nearest above
-  const dn = near.filter(L => L.price <= open).sort((a, b) => b.price - a.price).slice(0, PER_SIDE);  // 5 nearest below
-  const levels = [...up, ...dn].sort((a, b) => b.price - a.price);
+  const { up, dn, levels } = pickLevels(buildAllLevels(proj), open);
   const resistances = up.map(L => ({ level: L.price, touches: L.touches }));
   const supports = dn.map(L => ({ level: L.price, touches: L.touches }));
   const obj = { date, open, span: LOCK_SPAN, locked: true, lockedAt: new Date().toISOString(), ...extra, levels, resistances, supports };
