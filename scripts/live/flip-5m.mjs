@@ -57,7 +57,7 @@ for (let stop = false; !stop;) {
           const opt = itm(s.dir, s.level), side = s.dir === "LONG" ? "🟢" : "🔴";
           const touch = s.dir === "LONG" ? `low ${s.low}` : `high ${s.high}`;
           const msg = `${side} FLIP RETEST — ${s.dir} ${s.level}
-${closeHM(s.t)} 5-min candle retested ${s.level} (${touch}) and closed ${s.close} — ${s.pattern}
+${closeHM(s.t)} 5-min candle retested ${s.level} (${touch}) and closed ${s.close}
 Level ${s.level} · stop ${s.stop} · target ${s.target}
 Option: NIFTY ${opt} (ITM)
 Price is ${Math.abs(Math.round(s.close - s.level))} pts from the level now — don't chase a big run.`;
@@ -66,8 +66,8 @@ Price is ${Math.abs(Math.round(s.close - s.level))} pts from the level now — d
           else tg = await sendTelegram(msg);
           st.done[key] = { at: closeHM(s.t), tg };
           fs.writeFileSync(STATE, JSON.stringify(st));
-          fs.appendFileSync(FEED, JSON.stringify({ time: s.t, closeAt: closeHM(s.t), dir: s.dir, level: s.level, pattern: s.pattern, stop: s.stop, target: s.target, close: s.close, opt, tg }) + "\n");
-          console.log(`[FLIP ${closeHM(s.t)}] ${s.dir} ${s.level} | ${s.pattern} | ${touch} close ${s.close} | stop ${s.stop} tgt ${s.target} | ${opt} | [${tg}]`);
+          fs.appendFileSync(FEED, JSON.stringify({ time: s.t, closeAt: closeHM(s.t), dir: s.dir, level: s.level, stop: s.stop, target: s.target, close: s.close, opt, tg }) + "\n");
+          console.log(`[FLIP ${closeHM(s.t)}] ${s.dir} ${s.level} | ${touch} close ${s.close} | stop ${s.stop} tgt ${s.target} | ${opt} | [${tg}]`);
         }
         console.log(`[${new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" })} IST] candles ${candles.length} | last closed ${closeHM(last.t)} @ ${last.close}`);
       }

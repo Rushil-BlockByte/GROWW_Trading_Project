@@ -24,8 +24,7 @@ const candles = j.data.candles.map(c => ({ t: c[0], open: c[1], high: c[2], low:
 
 console.log(`${DATE} | open ${open} | ${lock ? "LOCKED list" : "15-min list built from the open"}: ${levels.map(L => L.price).join(", ")}`);
 let net = 0, w = 0, l = 0;
-const rejected = [];
-for (const s of scanFlips(candles, levels, open, undefined, rejected)) {
+for (const s of scanFlips(candles, levels, open)) {
   let res = "no exit by close", pts = 0, at = "";
   for (let k = s.i + 1; k < candles.length; k++) { const b = candles[k];
     const hitStop = s.dir === "LONG" ? b.low <= s.stop : b.high >= s.stop;
@@ -33,7 +32,6 @@ for (const s of scanFlips(candles, levels, open, undefined, rejected)) {
     if (hitStop) { res = "STOP"; pts = -25; at = closeHM(b.t); l++; break; }
     if (hitTgt) { res = "TARGET"; pts = 40; at = closeHM(b.t); w++; break; } }
   net += pts;
-  console.log(`  ${closeHM(s.t)}  ${s.dir.padEnd(5)} ${s.level} | ${s.pattern} | ${s.dir === "LONG" ? "low " + s.low : "high " + s.high} close ${s.close} | stop ${s.stop} tgt ${s.target} -> ${res}${at ? " @" + at : ""}${pts ? ` (${pts > 0 ? "+" : ""}${pts} from the level)` : ""}`);
+  console.log(`  ${closeHM(s.t)}  ${s.dir.padEnd(5)} ${s.level} | ${s.dir === "LONG" ? "low " + s.low : "high " + s.high} close ${s.close} | stop ${s.stop} tgt ${s.target} -> ${res}${at ? " @" + at : ""}${pts ? ` (${pts > 0 ? "+" : ""}${pts} from the level)` : ""}`);
 }
-if (rejected.length) { console.log("  retests skipped (candle was not a reversal pattern):"); for (const r of rejected) console.log(`    ${closeHM(r.t)}  ${r.dir.padEnd(5)} ${r.level} | O ${r.c.open} H ${r.c.high} L ${r.c.low} C ${r.c.close}`); }
 console.log(`  ${w} target, ${l} stop | net ${net >= 0 ? "+" : ""}${net} pts if each was filled at the level (stop checked before target in the same candle)`);
