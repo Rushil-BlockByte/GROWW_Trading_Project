@@ -154,9 +154,11 @@ export async function GET() {
   // day stats + open
   let open: number | null = null;
   let regime = "";
+  let locked: Lvl[] | null = null; // today's ONE locked list (today_levels.json) — same list the runner trades
   try {
     const tl = JSON.parse(fs.readFileSync(path.join(process.cwd(), "today_levels.json"), "utf8"));
     open = tl.open ?? null;
+    if (tl.locked && tl.date === date && Array.isArray(tl.levels)) locked = tl.levels as Lvl[];
     regime = tl.regime ? `${tl.regime} · VIX ${tl.vix ?? "?"}` : "";
   } catch {
     /* ignore */
@@ -168,7 +170,7 @@ export async function GET() {
 
   // nearest 15-min levels around the live price
   const ref = ltp ?? open ?? 0;
-  const levels = allLevels();
+  const levels = locked ?? allLevels();
   const res = levels.filter((L) => L.price > ref).sort((a, b) => a.price - b.price).slice(0, 4);
   const sup = levels.filter((L) => L.price < ref).sort((a, b) => b.price - a.price).slice(0, 4);
 

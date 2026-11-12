@@ -1,6 +1,6 @@
 // 15-minute S/R flip — LIVE signal runner (the main strategy from 2026-11-09).
-// Fetches today's NIFTY 5-min candles from Kite, aggregates to 15-min, builds 15-min
-// levels from the 5yr cache, and sends ONLY HIGH-conviction confirmed retests to the
+// Fetches today's NIFTY 5-min candles from Kite, aggregates to 15-min, trades the day's
+// LOCKED level list (today_levels.json, ±250 from the open — see levels-lock.mjs), and sends ONLY HIGH-conviction confirmed retests to the
 // Telegram group (bt: ~1.3-1.7/day, ~89% win, stable across 1yr and 5yr). Per-level
 // dedup = one trade per level per day. Self-contained: needs only the Kite token in
 // .env + the 5yr cache; does NOT need the app/stream running.
@@ -8,6 +8,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { readLock, lockLevels } from "./levels-lock.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJ = path.resolve(HERE, "..", "..");
@@ -114,25 +115,27 @@ async function fetch5min() {
   const nowMs = Date.now();
   // CLOSED-CANDLE ONLY: drop any 5-min candle still forming (its close time is in
   // the future) so a 15-min bar is detected only after all three 5-min subs close.
-  return r.data.candles.map(c => ({ t: c[0], high: c[2], low: c[3], close: c[4] }))
+  return r.data.candles.map(c => ({ t: c[0], open: c[1], high: c[2], low: c[3], close: c[4] }))
     .filter(c => new Date(c.t).getTime() + 5 * 60_000 <= nowMs); // [time,o,h,l,c,v]
 }
 
-// ---- build 15-min levels once from the cache, around today's open ----
-const cache = JSON.parse(fs.readFileSync(path.join(PROJ, "data/sr-5min-cache.json"), "utf8"));
-const histByDay = new Map();
-for (const b of cache.barsByUnderlying.NIFTY) { const d = b.startTime.slice(0, 10); if (!histByDay.has(d)) histByDay.set(d, []); histByDay.get(d).push({ t: b.startTime, high: b.high, low: b.low, close: b.close }); }
-const hist15 = [];
-for (const [d, bars] of [...histByDay.entries()].sort((a, b) => a[0] < b[0] ? -1 : 1)) { bars.sort((a, b) => a.t < b.t ? -1 : 1); for (const b of to15(bars, false)) hist15.push(b); }
-const ALL_LEVELS = buildLevels(hist15);
-let OPEN = null; try { OPEN = JSON.parse(fs.readFileSync(path.join(PROJ, "today_levels.json"), "utf8")).open; } catch {}
+// ---- ONE locked level list per day (today_levels.json, ±250 from the open) ----
+// Made by morning.mjs from the open. If it's missing, the runner builds it ONCE
+// from the first candle's open and locks it. Re-read each tick so a list made with
+// `morning.mjs ... --new` is picked up — but the runner never rebuilds it itself.
+let LOCK = readLock(PROJ, DATE);
+let OPEN = LOCK ? LOCK.open : null;
 
 async function tick() {
   const five = await fetch5min();
   if (!five.length) return "no bars yet";
-  if (OPEN == null) OPEN = five[0].close;
-  const SPAN = 400;
-  const levels = ALL_LEVELS.filter(L => Math.abs(L.price - OPEN) <= SPAN);
+  LOCK = readLock(PROJ, DATE) ?? LOCK;
+  if (!LOCK) {
+    LOCK = lockLevels(PROJ, DATE, five[0].open, { source: "runner (first-candle open)" });
+    console.log(`no locked list for ${DATE} — built one from the first candle's open ${five[0].open} (±${LOCK.span}, ${LOCK.levels.length} levels)`);
+  }
+  OPEN = LOCK.open;
+  const levels = LOCK.levels;
   const bars15 = to15(five, true); // completed 15-min bars only
   if (bars15.length < 2) return `warming up (${bars15.length} x 15m bars)`;
   const st = loadState();
@@ -185,7 +188,7 @@ ${br.breakTime.slice(11, 16)} IST`;
   return `15m bars ${bars15.length} | levels ${levels.length} | events ${found} | new HIGH ${highs} | last5m ${last}`;
 }
 
-console.log(`15m LIVE runner | ${DATE} | ${ALL_LEVELS.length} total 15m levels | open ${OPEN ?? "?"}`);
+console.log(`15m LIVE runner | ${DATE} | levels ${LOCK ? LOCK.levels.length + " LOCKED (±" + LOCK.span + ")" : "not locked yet"} | open ${OPEN ?? "?"}`);
 let stop = false;
 for (let i = 0; i < 450 && !stop; i++) {
   try { const msg = await tick(); console.log(`[${new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" })} IST] ${msg}`); }

@@ -1,8 +1,12 @@
 // Morning setup helper: (1) exchange request_token -> access_token into .env,
-// (2) calculate today's 5-min S/R level map around the open.
-// Usage: node scripts/morning.mjs "<request_token or - to skip>" "<open price or blank>"
+// (2) build + LOCK today's level list (±250 from the open) into today_levels.json.
+//     That ONE list is what you're shown, what the runner trades and what /feed15 shows,
+//     until you ask for a new one.
+// Usage: node scripts/morning.mjs "<request_token or - to skip>" "<open price or blank>" [--new]
+//   --new  = replace today's locked list (otherwise an existing list is never changed)
 import fs from "node:fs";
 import crypto from "node:crypto";
+import { readLock, lockLevels, printLock } from "./live/levels-lock.mjs";
 
 const readEnv = () => Object.fromEntries(
   fs.readFileSync(".env", "utf8").split(/\r?\n/).filter(l => l.includes("="))
@@ -57,34 +61,19 @@ try {
 const reg = VIX == null ? "unknown" : VIX < 12 ? "calm" : VIX < 15 ? "normal" : VIX < 20 ? "elevated" : "stressed";
 const WIN = VIX == null ? 180 : VIX < 12 ? 150 : VIX < 15 ? 180 : VIX < 20 ? 240 : 340;
 
-// build levels from the SAME source the live engine uses (sr-5min-cache)
-const cache = JSON.parse(fs.readFileSync("data/sr-5min-cache.json", "utf8"));
-const bars = cache.barsByUnderlying.NIFTY.map(b => ({ h: b.high, l: b.low, c: b.close }));
-const P = 3, CL = 20, MT = 6, sw = [];
-for (let k = P; k < bars.length - P; k++) {
-  const w = bars.slice(k - P, k + P + 1);
-  if (w.every((b, i) => i === P || bars[k].h >= b.h) && w.some((b, i) => i !== P && bars[k].h > b.h)) sw.push(bars[k].h);
-  if (w.every((b, i) => i === P || bars[k].l <= b.l) && w.some((b, i) => i !== P && bars[k].l < b.l)) sw.push(bars[k].l);
-}
-const uniq = [...new Set(sw.map(s => Math.round(s)))];
-const clustered = uniq.map(p => { const t = sw.filter(s => Math.abs(s - p) <= CL); return { level: Math.round([...t].sort((a, b) => a - b)[Math.floor(t.length / 2)]), touches: t.length }; }).sort((a, b) => b.touches - a.touches);
-const lv = []; for (const c of clustered) { if (lv.some(L => Math.abs(L.level - c.level) <= CL)) continue; lv.push(c); }
-const strong = lv.filter(L => L.touches >= MT);
-
+const DATE = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 const gap = OPEN - PREVCLOSE;
 const gapTag = Math.abs(gap) <= 50 ? "FLAT" : gap >= 100 ? "GAP-UP" : gap <= -100 ? "GAP-DOWN" : "mild";
 const sign = n => (n >= 0 ? "+" : "") + Math.round(n);
-const span = Math.max(WIN, 400);
-const res = strong.filter(L => L.level > OPEN && L.level <= OPEN + span).sort((a, b) => a.level - b.level);
-const sup = strong.filter(L => L.level < OPEN && L.level >= OPEN - span).sort((a, b) => b.level - a.level);
 
-console.log("\n  OPEN " + OPEN + " | prev close " + PREVCLOSE + " | gap " + sign(gap) + " (" + gapTag + ") | VIX " + (VIX ?? "n/a") + " (" + reg + ") | window +/-" + WIN);
-console.log("  levels from sr-5min-cache (" + bars.length + " bars), " + strong.length + " strong (>=" + MT + "t)\n");
-console.log("  -- RESISTANCE (above open) --");
-for (const L of res.slice(0, 8)) console.log("     " + L.level + "   " + sign(L.level - OPEN) + "   " + L.touches + "t");
-console.log("  -- SUPPORT (below open) --");
-for (const L of sup.slice(0, 8)) console.log("     " + L.level + "   " + sign(L.level - OPEN) + "   " + L.touches + "t");
-console.log("\n  NEAREST res " + (res[0]?.level ?? "-") + " | NEAREST sup " + (sup[0]?.level ?? "-"));
-
-fs.writeFileSync("today_levels.json", JSON.stringify({ date: to, open: OPEN, prevClose: PREVCLOSE, gap, gapTag, vix: VIX, regime: reg, window: WIN, resistances: res, supports: sup }, null, 2));
-console.log("\n  wrote today_levels.json");
+const existing = readLock(".", DATE);
+if (existing && !process.argv.includes("--new")) {
+  console.log("\n  today's list is already LOCKED — not changing it (add --new to replace it)");
+  if (existing.open !== OPEN) console.log("  note: locked list was built from open " + existing.open + ", not " + OPEN);
+  printLock(existing);
+  process.exit(0);
+}
+console.log("\n  OPEN " + OPEN + " | prev close " + PREVCLOSE + " | gap " + sign(gap) + " (" + gapTag + ") | VIX " + (VIX ?? "n/a") + " (" + reg + ")");
+const L = lockLevels(".", DATE, OPEN, { prevClose: PREVCLOSE, gap, gapTag, vix: VIX, regime: reg });
+printLock(L);
+console.log("\n  wrote today_levels.json — the runner and /feed15 use this exact list until you run with --new");
