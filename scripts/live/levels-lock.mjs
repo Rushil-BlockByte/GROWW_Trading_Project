@@ -1,4 +1,4 @@
-// ONE level list per day. Built once from the open (±250), written to
+// ONE level list per day. Built once from the open (6 R + 6 S within ±250), written to
 // today_levels.json with locked:true, and then read by everything:
 // morning.mjs (what you're shown), sr-flip-15m.mjs (what fires Telegram) and
 // /feed15 (the dashboard). Nothing rebuilds it during the day. A new list is
@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const LOCK_SPAN = 250;
-export const PER_SIDE = 5; // 5 resistances + 5 supports, nearest the open, within ±250
+export const PER_SIDE = 6; // 6 resistances + 6 supports, nearest the open, within ±250
 
 function detectSwings(bars, pivot) { const sw = [];
   for (let i = pivot; i < bars.length - pivot; i++) { const w = bars.slice(i - pivot, i + pivot + 1);
