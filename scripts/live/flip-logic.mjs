@@ -1,8 +1,8 @@
 // 5-min FLIP monitor logic (the user's rules, 2026-11-12):
 //  1. levels are fixed for the day (today_levels.json)
-//  2. every 5-min candle CLOSE is checked for a broken level. BROKEN = the close is at least
-//     15 pts past the level (breakBuffer). It stays broken until a close 15+ pts back the
-//     other way (that is a break in the other direction).
+//  2. every 5-min candle CLOSE is checked for a broken level. BROKEN = any close past the
+//     level (breakBuffer 0, user 2026-11-16; was 15). It stays broken until a close back past
+//     it the other way (that is a break in the other direction).
 //  3. a broken level becomes the FLIP level; wait for a retest + bounce from it
 //  4. if price breaks several levels, the furthest one it is still beyond is the flip
 //     (R1,R2,R3 broken -> flip R3; then R4 broken -> flip R4)
@@ -19,7 +19,7 @@
 // by the replay, so the replay shows exactly what the live monitor would have sent.
 
 export const FLIP5 = {
-  breakBuffer: 15, // a level is broken only when a 5-min close is 15+ pts past it
+  breakBuffer: 0, // a level is broken by ANY 5-min close past it (user, 2026-11-16; was 15)
   touch: 0,   // retest = candle low must actually REACH the flip (low <= flip for a LONG)...
   stop: 25,   // ...but not deeper than the stop (25 pts past the flip = it failed)
   target: 40,
@@ -42,8 +42,8 @@ export function scanFlips(candles, levels, dayOpen, P = FLIP5, breaks = null) {
     for (const L of levels) {
       const p = L.price;
       const was = st.get(p)?.dir;
-      if (c.close >= p + P.breakBuffer && was !== "UP") { st.set(p, { dir: "UP", at: i, real: true }); brokeUp.push(p); }
-      else if (c.close <= p - P.breakBuffer && was !== "DOWN") { st.set(p, { dir: "DOWN", at: i, real: true }); brokeDown.push(p); }
+      if (c.close > p + P.breakBuffer && was !== "UP") { st.set(p, { dir: "UP", at: i, real: true }); brokeUp.push(p); }
+      else if (c.close < p - P.breakBuffer && was !== "DOWN") { st.set(p, { dir: "DOWN", at: i, real: true }); brokeDown.push(p); }
     }
     // (4)(5) current flips: furthest broken level price is STILL beyond
     let longFlip = null, shortFlip = null;
