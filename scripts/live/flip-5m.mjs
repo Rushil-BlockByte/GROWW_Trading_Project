@@ -27,6 +27,7 @@ const SEND_TELEGRAM = process.env.SEND_TELEGRAM !== "0";
 const RETEST_ALERTS = process.env.RETEST_ALERTS === "1"; // default OFF: break alerts only
 const STALE_MIN = Number(process.env.STALE_MIN || 10); // an alert older than this (e.g. started late) is logged, not sent
 const VOL_DAYS = 5;                                     // "usual" volume = average of this slot over the last 5 sessions
+const SETTLE_MS = 30_000;                                // read a candle only 30s after it closes (Kite revises the last candle for a few seconds)
 
 const itm = (dir, ref) => dir === "LONG" ? `${Math.round((ref - 125) / 50) * 50} CE` : `${Math.round((ref + 125) / 50) * 50} PE`;
 const fmt = n => Math.round(n).toLocaleString("en-IN");
@@ -43,7 +44,7 @@ async function hist(token, from, to) {
 async function fetchClosed() {
   const now = Date.now();
   return (await hist(256265, DATE, DATE)).map(c => ({ t: c[0], open: c[1], high: c[2], low: c[3], close: c[4] }))
-    .filter(c => new Date(c.t).getTime() + 5 * 60_000 <= now); // CLOSED candles only
+    .filter(c => new Date(c.t).getTime() + 5 * 60_000 + SETTLE_MS <= now); // CLOSED + settled candles only
 }
 
 // ---- volume: current-month NIFTY futures (nearest expiry on/after today) ----
